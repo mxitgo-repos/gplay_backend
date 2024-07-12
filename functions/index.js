@@ -26,6 +26,19 @@ exports.checkEmail = functions.https.onRequest(async (req, res) => {
 });
 
 exports.deleteUser = functions.https.onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    // Manejar solicitudes preflight
+    res.set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    res.set("Access-Control-Max-Age", "3600");
+    res.status(204).send("");
+    return;
+  }
+
   if (req.method !== "DELETE") {
     return res.status(405).send("Method not allowed");
   }
