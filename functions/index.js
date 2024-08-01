@@ -65,3 +65,50 @@ exports.deleteUser = functions.https.onRequest(async (req, res) => {
     });
   }
 });
+
+exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*'); // Ajusta esto según sea necesario
+  res.set('Access-Control-Allow-Methods', 'POST');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    res.set('Access-Control-Allow-Methods', 'POST');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    res.set('Access-Control-Max-Age', '3600');
+    return res.status(204).send('');
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const { startDate, endDate } = req.body;
+
+  if (!startDate || !endDate) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The start date and end date are required",
+    });
+  }
+
+  try {
+    const users = await admin.auth().listUsers();
+    const start = new Date(startDate).getTime();
+    const end = new Date(endDate).getTime();
+
+    const activeUsers = users.users.filter(user => {
+      const lastLogin = user.metadata.lastSignInTime ? new Date(user.metadata.lastSignInTime).getTime() : 0;
+      return lastLogin >= start && lastLogin <= end;
+    });
+
+    const count = activeUsers.length;
+
+    return res.status(200).send({ count });
+  } catch (error) {
+    return res.status(500).send({
+      error: "internal",
+      message: "Error getting users",
+      details: error.message,
+    });
+  }
+});
