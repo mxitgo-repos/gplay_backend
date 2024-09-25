@@ -126,10 +126,10 @@ exports.sendNotificationByInterest = functions.firestore.document("event/{eventI
     },
     data: {
       notification: "1",
-      information: {
+      information: JSON.stringify({
         eventId: snap.id,
         eventHost: eventData.hostRef.id,
-      },
+      }),
     },
     android: {
       notification: {
@@ -177,9 +177,9 @@ exports.sendNotificationInviteUser = functions.https.onRequest(async (req, res) 
     },
     data: {
       notification: "2",
-      information: {
+      information: JSON.stringify({
         eventId: eventId,
-      },
+      }),
     },
     android: {
       notification: {
@@ -221,10 +221,10 @@ exports.sendNotificationByState = functions.firestore.document("event/{eventId}"
     },
     data: {
       notification: "3",
-      information: {
+      information: JSON.stringify({
         eventId: snap.id,
         eventHost: eventData.hostRef.id,
-      },
+      }),
     },
     android: {
       notification: {
@@ -287,10 +287,10 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 0 * * *").
         },
         data: {
           notification: "4",
-          information: {
+          information: JSON.stringify({
             eventId: eventId,
             eventHost: eventData.hostRef.id,
-          },
+          }),
         },
         android: {
           notification: {
