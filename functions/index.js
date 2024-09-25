@@ -131,7 +131,7 @@ exports.sendNotificationByInterest = functions.firestore.document("event/{eventI
         eventHost: eventData.hostRef.id,
       }),
       image: eventData.photo,
-      date: admin.firestore.FieldValue.serverTimestamp(),
+      date: new Date().toISOString(),
     },
     android: {
       notification: {
@@ -183,7 +183,7 @@ exports.sendNotificationInviteUser = functions.https.onRequest(async (req, res) 
         eventId: eventId,
       }),
       image: eventPhoto,
-      date: admin.firestore.FieldValue.serverTimestamp(),
+      date: new Date().toISOString(),
     },
     android: {
       notification: {
@@ -230,7 +230,7 @@ exports.sendNotificationByState = functions.firestore.document("event/{eventId}"
         eventHost: eventData.hostRef.id,
       }),
       image: eventData.photo,
-      date: admin.firestore.FieldValue.serverTimestamp(),
+      date: new Date().toISOString(),
     },
     android: {
       notification: {
@@ -298,7 +298,7 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 0 * * *").
             eventHost: eventData.hostRef.id,
           }),
           image: eventData.photo,
-          date: admin.firestore.FieldValue.serverTimestamp(),
+          date: new Date().toISOString(),
         },
         android: {
           notification: {
