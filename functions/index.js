@@ -131,6 +131,7 @@ exports.sendNotificationByInterest = functions.firestore.document("event/{eventI
         eventHost: eventData.hostRef.id,
       }),
       image: eventData.photo,
+      date: admin.firestore.FieldValue.serverTimestamp(),
     },
     android: {
       notification: {
@@ -182,6 +183,7 @@ exports.sendNotificationInviteUser = functions.https.onRequest(async (req, res) 
         eventId: eventId,
       }),
       image: eventPhoto,
+      date: admin.firestore.FieldValue.serverTimestamp(),
     },
     android: {
       notification: {
@@ -228,6 +230,7 @@ exports.sendNotificationByState = functions.firestore.document("event/{eventId}"
         eventHost: eventData.hostRef.id,
       }),
       image: eventData.photo,
+      date: admin.firestore.FieldValue.serverTimestamp(),
     },
     android: {
       notification: {
@@ -295,6 +298,7 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 0 * * *").
             eventHost: eventData.hostRef.id,
           }),
           image: eventData.photo,
+          date: admin.firestore.FieldValue.serverTimestamp(),
         },
         android: {
           notification: {
@@ -331,7 +335,7 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
     return res.status(405).send("Method not allowed");
   }
 
-  const {userId, title, content, image, eventId, eventHost, navigation, notificationType} = req.body;
+  const {userId, title, content, image, eventId, eventHost, navigation, notificationType, date} = req.body;
 
   if (!userId || !title || !content || !image || !eventHost || !navigation || !notificationType) {
     return res.status(400).send({
@@ -349,6 +353,7 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
     navigation,
     notificationType,
     "isRead": false,
+    date: date,
   };
 
   try {
