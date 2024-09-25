@@ -1,3 +1,5 @@
+/* eslint-disable no-undef */
+/* eslint-disable max-len */
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 admin.initializeApp();
@@ -67,22 +69,22 @@ exports.deleteUser = functions.https.onRequest(async (req, res) => {
 });
 
 exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
-  res.set('Access-Control-Allow-Origin', '*'); // Ajusta esto según sea necesario
-  res.set('Access-Control-Allow-Methods', 'POST');
-  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "POST");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
 
-  if (req.method === 'OPTIONS') {
-    res.set('Access-Control-Allow-Methods', 'POST');
-    res.set('Access-Control-Allow-Headers', 'Content-Type');
-    res.set('Access-Control-Max-Age', '3600');
-    return res.status(204).send('');
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "POST");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    res.set("Access-Control-Max-Age", "3600");
+    return res.status(204).send("");
   }
 
-  if (req.method !== 'POST') {
+  if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
 
-  const { startDate, endDate } = req.body;
+  const {startDate, endDate} = req.body;
 
   if (!startDate || !endDate) {
     return res.status(400).send({
@@ -96,14 +98,14 @@ exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
     const start = new Date(startDate).getTime();
     const end = new Date(endDate).getTime();
 
-    const activeUsers = users.users.filter(user => {
+    const activeUsers = users.users.filter((user) => {
       const lastLogin = user.metadata.lastSignInTime ? new Date(user.metadata.lastSignInTime).getTime() : 0;
       return lastLogin >= start && lastLogin <= end;
     });
 
     const count = activeUsers.length;
 
-    return res.status(200).send({ count });
+    return res.status(200).send({count});
   } catch (error) {
     return res.status(500).send({
       error: "internal",
@@ -113,34 +115,34 @@ exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.sendNotificationByInterest = functions.firestore.document('event/{eventId}').onCreate(async (snap, context) => {
+exports.sendNotificationByInterest = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
   const eventData = snap.data();
-    
+
   const message = {
     notification: {
-      title: 'Event Just for You!',
-      body: 'We found an event that matches your interests. Don’t miss out—check it out now and see if it’s the perfect fit!',
-      image: eventData.photo
+      title: "Event Just for You!",
+      body: "We found an event that matches your interests. Don’t miss out—check it out now and see if it’s the perfect fit!",
+      image: eventData.photo,
     },
     data: {
-      notification: '1',
+      notification: "1",
       information: {
         eventId: snap.id,
         eventHost: eventData.hostRef.id,
-      }
+      },
     },
     android: {
       notification: {
-        sound: 'default',
-        priority: 'high'
-      }
+        sound: "default",
+        priority: "high",
+      },
     },
     apns: {
       payload: {
         aps: {
-          sound: 'default',
-        }
-      }
+          sound: "default",
+        },
+      },
     },
     topic: `${eventData.interestList}-${eventData.state}`,
   };
@@ -149,21 +151,21 @@ exports.sendNotificationByInterest = functions.firestore.document('event/{eventI
     await admin.messaging().send(message);
     console.log(`Notification successfully sent to the topic: ${eventData.interestList}-${eventData.state}`);
   } catch (error) {
-    console.error('Error sending notification sendNotificationByInterest:', error);
+    console.error("Error sending notification sendNotificationByInterest:", error);
   }
 });
 
 exports.sendNotificationInviteUser = functions.https.onRequest(async (req, res) => {
-  if (req.method !== 'POST') {
-    return res.status(405).send('Method not allowed');
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
   }
 
-  const { inviteUser, eventName, eventPhoto, eventId, guestId } = req.body;
+  const {inviteUser, eventName, eventPhoto, eventId, guestId} = req.body;
 
   if (!inviteUser || !eventName || !eventPhoto || !eventId || !guestId) {
     return res.status(400).send({
-      error: 'bad-request',
-      message: 'The inviteUser, eventName, eventPhoto, eventId and guestId of the notification are required',
+      error: "bad-request",
+      message: "The inviteUser, eventName, eventPhoto, eventId and guestId of the notification are required",
     });
   }
 
@@ -171,71 +173,71 @@ exports.sendNotificationInviteUser = functions.https.onRequest(async (req, res) 
     notification: {
       title: "You've Got an Invite!",
       body: `${inviteUser} just invited you to join the event ${eventName}! Ready to RSVP? Accept or decline—it’s your call!`,
-      image: eventPhoto
+      image: eventPhoto,
     },
     data: {
-      notification: '2',
+      notification: "2",
       information: {
         eventId: eventId,
-      }
+      },
     },
     android: {
       notification: {
-        sound: 'default',
-        priority: 'high'
-      }
+        sound: "default",
+        priority: "high",
+      },
     },
     apns: {
       payload: {
         aps: {
-          sound: 'default',
-        }
-      }
+          sound: "default",
+        },
+      },
     },
     topic: `${guestId}`,
   };
 
   try {
     await admin.messaging().send(message);
-    return res.status(200).send({ message: 'Notification sent successfully' });
+    return res.status(200).send({message: "Notification sent successfully"});
   } catch (error) {
-    console.error('Error sending sendNotificationInviteUser notification:', error);
+    console.error("Error sending sendNotificationInviteUser notification:", error);
     return res.status(500).send({
-      error: 'internal',
-      message: 'Error sending sendNotificationInviteUser notification',
+      error: "internal",
+      message: "Error sending sendNotificationInviteUser notification",
       details: error.message,
     });
   }
 });
 
-exports.sendNotificationByState = functions.firestore.document('event/{eventId}').onCreate(async (snap, context) => {
+exports.sendNotificationByState = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
   const eventData = snap.data();
-    
+
   const message = {
     notification: {
-      title: 'New Events Nearby!',
+      title: "New Events Nearby!",
       body: "New events just popped up near you! Dive in and see what's happening around town!",
-      image: eventData.photo
+      image: eventData.photo,
     },
     data: {
-      notification: '3',
+      notification: "3",
       information: {
         eventId: snap.id,
         eventHost: eventData.hostRef.id,
-      }
+      },
     },
     android: {
       notification: {
-        sound: 'default',
-        priority: 'high'
-      }
+        sound: "default",
+        priority: "high",
+      },
     },
     apns: {
       payload: {
         aps: {
-          sound: 'default',
-        }
-      }
+          sound: "default",
+        },
+      },
     },
     topic: `${eventData.state}`,
   };
@@ -244,35 +246,34 @@ exports.sendNotificationByState = functions.firestore.document('event/{eventId}'
     await admin.messaging().send(message);
     console.log(`Notification successfully sent to the topic: ${eventData.state}`);
   } catch (error) {
-    console.error('Error sending notification sendNotificationByState:', error);
+    console.error("Error sending notification sendNotificationByState:", error);
   }
 });
 
-exports.sendNotificationEventsReminder = functions.pubsub.schedule('0 0 * * *').onRun(async(context) => {
-
+exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 0 * * *").onRun(async (context) => {
   const today = new Date();
-  today.setUTCHours(0, 0, 0, 0); 
+  today.setUTCHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
   tomorrow.setUTCDate(today.getUTCDate() + 1);
 
   const startOfTomorrow = new Date(tomorrow);
   const endOfTomorrow = new Date(tomorrow);
-  endOfTomorrow.setUTCHours(23, 59, 59, 999); 
+  endOfTomorrow.setUTCHours(23, 59, 59, 999);
 
   console.log(`Searching for events of the day: ${tomorrow.toISOString().slice(0, 10)}`);
 
   try {
-    const snapshot = await db.collection('event')
-      .where('startDate', '>=', startOfTomorrow)
-      .where('startDate', '<=', endOfTomorrow)
-      .get();
+    const snapshot = await db.collection("event")
+        .where("startDate", ">=", startOfTomorrow)
+        .where("startDate", "<=", endOfTomorrow)
+        .get();
 
     if (snapshot.empty) {
-      console.log('No events found for tomorrow');
+      console.log("No events found for tomorrow");
       return null;
     }
 
-    snapshot.forEach(async doc => {
+    snapshot.forEach(async (doc) => {
       const eventData = doc.data();
       const eventId = doc.id;
 
@@ -280,43 +281,42 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule('0 0 * * *').
 
       const message = {
         notification: {
-          title: 'Event Reminder!',
+          title: "Event Reminder!",
           body: `Your event '${eventData.name}' is coming up soon! Are you ready for it?`,
-          image: eventData.photo
+          image: eventData.photo,
         },
         data: {
-          notification: '4',
+          notification: "4",
           information: {
             eventId: eventId,
             eventHost: eventData.hostRef.id,
-          }
+          },
         },
         android: {
           notification: {
-            sound: 'default',
-            priority: 'high'
-          }
+            sound: "default",
+            priority: "high",
+          },
         },
         apns: {
           payload: {
             aps: {
-              sound: 'default',
-            }
-          }
+              sound: "default",
+            },
+          },
         },
         topic: `${eventId}`,
       };
 
       try {
-          const response = await admin.messaging().send(message);
-          console.log(`Notification sent for the event ${eventId}: ${response}`);
+        const response = await admin.messaging().send(message);
+        console.log(`Notification sent for the event ${eventId}: ${response}`);
       } catch (error) {
-          console.error(`Error sending notification for event ${eventId}:`, error);
+        console.error(`Error sending notification for event ${eventId}:`, error);
       }
     });
-
   } catch (error) {
-    console.error('Error getting events:', error);
+    console.error("Error getting events:", error);
   }
 
   return null;
