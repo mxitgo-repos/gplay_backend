@@ -112,3 +112,212 @@ exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
     });
   }
 });
+
+exports.sendNotificationByInterest = functions.firestore.document('event/{eventId}').onCreate(async (snap, context) => {
+  const eventData = snap.data();
+    
+  const message = {
+    notification: {
+      title: 'Event Just for You!',
+      body: 'We found an event that matches your interests. Don’t miss out—check it out now and see if it’s the perfect fit!',
+      image: eventData.photo
+    },
+    data: {
+      notification: '1',
+      information: {
+        eventId: snap.id,
+        eventHost: eventData.hostRef.id,
+      }
+    },
+    android: {
+      notification: {
+        sound: 'default',
+        priority: 'high'
+      }
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: 'default',
+        }
+      }
+    },
+    topic: `${eventData.interestList}-${eventData.state}`,
+  };
+
+  try {
+    await admin.messaging().send(message);
+    console.log(`Notification successfully sent to the topic: ${eventData.interestList}-${eventData.state}`);
+  } catch (error) {
+    console.error('Error sending notification sendNotificationByInterest:', error);
+  }
+});
+
+exports.sendNotificationInviteUser = functions.https.onRequest(async (req, res) => {
+  if (req.method !== 'POST') {
+    return res.status(405).send('Method not allowed');
+  }
+
+  const { inviteUser, eventName, eventPhoto, eventId, guestId } = req.body;
+
+  if (!inviteUser || !eventName || !eventPhoto || !eventId || !guestId) {
+    return res.status(400).send({
+      error: 'bad-request',
+      message: 'The inviteUser, eventName, eventPhoto, eventId and guestId of the notification are required',
+    });
+  }
+
+  const message = {
+    notification: {
+      title: "You've Got an Invite!",
+      body: `${inviteUser} just invited you to join the event ${eventName}! Ready to RSVP? Accept or decline—it’s your call!`,
+      image: eventPhoto
+    },
+    data: {
+      notification: '2',
+      information: {
+        eventId: eventId,
+      }
+    },
+    android: {
+      notification: {
+        sound: 'default',
+        priority: 'high'
+      }
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: 'default',
+        }
+      }
+    },
+    topic: `${guestId}`,
+  };
+
+  try {
+    await admin.messaging().send(message);
+    return res.status(200).send({ message: 'Notification sent successfully' });
+  } catch (error) {
+    console.error('Error sending sendNotificationInviteUser notification:', error);
+    return res.status(500).send({
+      error: 'internal',
+      message: 'Error sending sendNotificationInviteUser notification',
+      details: error.message,
+    });
+  }
+});
+
+exports.sendNotificationByState = functions.firestore.document('event/{eventId}').onCreate(async (snap, context) => {
+  const eventData = snap.data();
+    
+  const message = {
+    notification: {
+      title: 'New Events Nearby!',
+      body: "New events just popped up near you! Dive in and see what's happening around town!",
+      image: eventData.photo
+    },
+    data: {
+      notification: '3',
+      information: {
+        eventId: snap.id,
+        eventHost: eventData.hostRef.id,
+      }
+    },
+    android: {
+      notification: {
+        sound: 'default',
+        priority: 'high'
+      }
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: 'default',
+        }
+      }
+    },
+    topic: `${eventData.state}`,
+  };
+
+  try {
+    await admin.messaging().send(message);
+    console.log(`Notification successfully sent to the topic: ${eventData.state}`);
+  } catch (error) {
+    console.error('Error sending notification sendNotificationByState:', error);
+  }
+});
+
+exports.sendNotificationEventsReminder = functions.pubsub.schedule('0 0 * * *').onRun(async(context) => {
+
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0); 
+  const tomorrow = new Date(today);
+  tomorrow.setUTCDate(today.getUTCDate() + 1);
+
+  const startOfTomorrow = new Date(tomorrow);
+  const endOfTomorrow = new Date(tomorrow);
+  endOfTomorrow.setUTCHours(23, 59, 59, 999); 
+
+  console.log(`Searching for events of the day: ${tomorrow.toISOString().slice(0, 10)}`);
+
+  try {
+    const snapshot = await db.collection('event')
+      .where('startDate', '>=', startOfTomorrow)
+      .where('startDate', '<=', endOfTomorrow)
+      .get();
+
+    if (snapshot.empty) {
+      console.log('No events found for tomorrow');
+      return null;
+    }
+
+    snapshot.forEach(async doc => {
+      const eventData = doc.data();
+      const eventId = doc.id;
+
+      console.log(`Event found: ${eventId}`, eventData);
+
+      const message = {
+        notification: {
+          title: 'Event Reminder!',
+          body: `Your event '${eventData.name}' is coming up soon! Are you ready for it?`,
+          image: eventData.photo
+        },
+        data: {
+          notification: '4',
+          information: {
+            eventId: eventId,
+            eventHost: eventData.hostRef.id,
+          }
+        },
+        android: {
+          notification: {
+            sound: 'default',
+            priority: 'high'
+          }
+        },
+        apns: {
+          payload: {
+            aps: {
+              sound: 'default',
+            }
+          }
+        },
+        topic: `${eventId}`,
+      };
+
+      try {
+          const response = await admin.messaging().send(message);
+          console.log(`Notification sent for the event ${eventId}: ${response}`);
+      } catch (error) {
+          console.error(`Error sending notification for event ${eventId}:`, error);
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting events:', error);
+  }
+
+  return null;
+});
