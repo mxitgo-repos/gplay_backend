@@ -353,7 +353,7 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
     navigation,
     notificationType,
     "isRead": false,
-    date: date,
+    "date": date,
   };
 
   try {
