@@ -130,6 +130,7 @@ exports.sendNotificationByInterest = functions.firestore.document("event/{eventI
         eventId: snap.id,
         eventHost: eventData.hostRef.id,
       }),
+      image: eventData.photo,
     },
     android: {
       notification: {
@@ -180,6 +181,7 @@ exports.sendNotificationInviteUser = functions.https.onRequest(async (req, res) 
       information: JSON.stringify({
         eventId: eventId,
       }),
+      image: eventPhoto,
     },
     android: {
       notification: {
@@ -225,6 +227,7 @@ exports.sendNotificationByState = functions.firestore.document("event/{eventId}"
         eventId: snap.id,
         eventHost: eventData.hostRef.id,
       }),
+      image: eventData.photo,
     },
     android: {
       notification: {
@@ -291,6 +294,7 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 0 * * *").
             eventId: eventId,
             eventHost: eventData.hostRef.id,
           }),
+          image: eventData.photo,
         },
         android: {
           notification: {
@@ -320,4 +324,47 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 0 * * *").
   }
 
   return null;
+});
+
+exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const {userId, title, content, image, eventId, eventHost, navigation, notificationType} = req.body;
+
+  if (!userId || !title || !content || !image || !eventHost || !navigation || !notificationType) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The userId, title, content, image, eventHost, navigation and notificationType of the pust notification user are required",
+    });
+  }
+
+  const notificationData = {
+    title,
+    content,
+    image,
+    eventId,
+    eventHost,
+    navigation,
+    notificationType,
+    "isRead": false
+  };
+
+  try {
+    await admin.firestore().collection('user').doc(userId).update({
+      notifications: FieldValue.arrayUnion(notificationData),
+    });
+
+    return res.status(200).send({
+      message: 'Notification added successfully',
+    });
+  } catch (error) {
+    console.error('Error adding notification:', error);
+    return res.status(500).send({
+      error: 'internal',
+      message: 'Error adding notification',
+      details: error.message,
+    });
+  }
 });
