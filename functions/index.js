@@ -144,12 +144,12 @@ exports.sendNotificationByInterest = functions.firestore.document("event/{eventI
         },
       },
     },
-    topic: `${eventData.interestList}-${eventData.state}`,
+    topic: `${eventData.interestList.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}-${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
   };
 
   try {
     await admin.messaging().send(message);
-    console.log(`Notification successfully sent to the topic: ${eventData.interestList}-${eventData.state}`);
+    console.log(`Notification successfully sent to the topic: ${eventData.interestList.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}-${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
   } catch (error) {
     console.error("Error sending notification sendNotificationByInterest:", error);
   }
@@ -194,7 +194,7 @@ exports.sendNotificationInviteUser = functions.https.onRequest(async (req, res) 
         },
       },
     },
-    topic: `${guestId}`,
+    topic: `${guestId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
   };
 
   try {
@@ -239,12 +239,12 @@ exports.sendNotificationByState = functions.firestore.document("event/{eventId}"
         },
       },
     },
-    topic: `${eventData.state}`,
+    topic: `${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
   };
 
   try {
     await admin.messaging().send(message);
-    console.log(`Notification successfully sent to the topic: ${eventData.state}`);
+    console.log(`Notification successfully sent to the topic: ${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
   } catch (error) {
     console.error("Error sending notification sendNotificationByState:", error);
   }
@@ -305,7 +305,7 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 0 * * *").
             },
           },
         },
-        topic: `${eventId}`,
+        topic: `${eventId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
       };
 
       try {
