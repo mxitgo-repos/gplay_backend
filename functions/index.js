@@ -348,22 +348,22 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
     eventHost,
     navigation,
     notificationType,
-    "isRead": false
+    "isRead": false,
   };
 
   try {
-    await admin.firestore().collection('user').doc(userId).update({
+    await admin.firestore().collection("user").doc(userId).update({
       notifications: FieldValue.arrayUnion(notificationData),
     });
 
     return res.status(200).send({
-      message: 'Notification added successfully',
+      message: "Notification added successfully",
     });
   } catch (error) {
-    console.error('Error adding notification:', error);
+    console.error("Error adding notification:", error);
     return res.status(500).send({
-      error: 'internal',
-      message: 'Error adding notification',
+      error: "internal",
+      message: "Error adding notification",
       details: error.message,
     });
   }
