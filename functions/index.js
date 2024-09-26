@@ -4,7 +4,7 @@ const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 admin.initializeApp();
 
-const {FieldValue} = admin.firestore;
+const {FieldValue, Timestamp} = admin.firestore;
 
 exports.checkEmail = functions.https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
@@ -335,7 +335,7 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
     return res.status(405).send("Method not allowed");
   }
 
-  const {userId, title, content, image, eventId, eventHost, navigation, notificationType, date} = req.body;
+  const {userId, title, content, image, eventId, eventHost, navigation, notificationType} = req.body;
 
   if (!userId || !title || !content || !image || !eventHost || !navigation || !notificationType) {
     return res.status(400).send({
@@ -353,7 +353,7 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
     navigation,
     notificationType,
     "isRead": false,
-    "date": date,
+    "date": Timestamp.now(),
   };
 
   try {
