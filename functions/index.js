@@ -264,7 +264,7 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * 1")
 
   const endDate = new Date(today);
   endDate.setUTCDate(today.getUTCDate() + 7);
-  endDate.setUTCHours(23, 59, 59, 999); 
+  endDate.setUTCHours(23, 59, 59, 999);
 
   console.log(`Searching for events from today (${today.toISOString().slice(0, 10)}) to ${endDate.toISOString().slice(0, 10)}`);
 
