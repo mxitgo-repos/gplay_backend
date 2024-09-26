@@ -258,26 +258,24 @@ exports.sendNotificationByState = functions.firestore.document("event/{eventId}"
   }
 });
 
-exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 0 * * *").onRun(async (context) => {
+exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setUTCDate(today.getUTCDate() + 1);
 
-  const startOfTomorrow = new Date(tomorrow);
-  const endOfTomorrow = new Date(tomorrow);
-  endOfTomorrow.setUTCHours(23, 59, 59, 999);
+  const endDate = new Date(today);
+  endDate.setUTCDate(today.getUTCDate() + 7);
+  endDate.setUTCHours(23, 59, 59, 999); 
 
-  console.log(`Searching for events of the day: ${tomorrow.toISOString().slice(0, 10)}`);
+  console.log(`Searching for events from today (${today.toISOString().slice(0, 10)}) to ${endDate.toISOString().slice(0, 10)}`);
 
   try {
     const snapshot = await db.collection("event")
-        .where("startDate", ">=", startOfTomorrow)
-        .where("startDate", "<=", endOfTomorrow)
+        .where("startDate", ">=", today)
+        .where("startDate", "<=", endDate)
         .get();
 
     if (snapshot.empty) {
-      console.log("No events found for tomorrow");
+      console.log("No events found in the next 7 days");
       return null;
     }
 
