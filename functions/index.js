@@ -139,6 +139,7 @@ exports.sendNotificationByInterest = functions.firestore.document("event/{eventI
       notification: {
         sound: "default",
         priority: "high",
+        channelId: "high_importance_channel",
       },
     },
     apns: {
@@ -191,6 +192,7 @@ exports.sendNotificationInviteUser = functions.https.onRequest(async (req, res) 
       notification: {
         sound: "default",
         priority: "high",
+        channelId: "high_importance_channel",
       },
     },
     apns: {
@@ -238,6 +240,7 @@ exports.sendNotificationByState = functions.firestore.document("event/{eventId}"
       notification: {
         sound: "default",
         priority: "high",
+        channelId: "high_importance_channel",
       },
     },
     apns: {
@@ -304,6 +307,7 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * 1")
           notification: {
             sound: "default",
             priority: "high",
+            channelId: "high_importance_channel",
           },
         },
         apns: {
