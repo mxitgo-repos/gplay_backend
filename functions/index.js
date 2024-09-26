@@ -4,6 +4,8 @@ const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 admin.initializeApp();
 
+const {FieldValue} = admin.firestore;
+
 exports.checkEmail = functions.https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
