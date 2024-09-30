@@ -443,10 +443,10 @@ exports.sendNotificationLastMinutes = functions.firestore.document("event/{event
   const startDate = eventData.startDate.toDate();
 
   const today = new Date();
-  today.setHours(0, 0, 0, 0); 
+  today.setHours(0, 0, 0, 0);
 
   const eventStartDate = new Date(startDate);
-  eventStartDate.setHours(0, 0, 0, 0); 
+  eventStartDate.setHours(0, 0, 0, 0);
 
   if (eventStartDate.getTime() !== today.getTime()) {
     console.log("The event is not today. Notification will not be sent.");
