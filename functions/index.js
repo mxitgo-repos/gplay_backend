@@ -117,6 +117,50 @@ exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
   }
 });
 
+exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const {userId, title, content, image, eventId, eventHost, navigation, notificationType} = req.body;
+
+  if (!userId || !title || !content || !image || !eventHost || !navigation || !notificationType) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The userId, title, content, image, eventHost, navigation and notificationType of the pust notification user are required",
+    });
+  }
+
+  const notificationData = {
+    title,
+    content,
+    image,
+    eventId,
+    eventHost,
+    navigation,
+    notificationType,
+    "isRead": false,
+    "date": Timestamp.now(),
+  };
+
+  try {
+    await admin.firestore().collection("user").doc(userId).update({
+      notifications: FieldValue.arrayUnion(notificationData),
+    });
+
+    return res.status(200).send({
+      message: "Notification added successfully",
+    });
+  } catch (error) {
+    console.error("Error adding notification:", error);
+    return res.status(500).send({
+      error: "internal",
+      message: "Error adding notification",
+      details: error.message,
+    });
+  }
+});
+
 exports.sendNotificationByInterest = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
   const eventData = snap.data();
 
@@ -334,46 +378,194 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * 1")
   return null;
 });
 
-exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationEventFinish = functions.https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
 
-  const {userId, title, content, image, eventId, eventHost, navigation, notificationType} = req.body;
+  const {eventPhoto, eventId, hostId} = req.body;
 
-  if (!userId || !title || !content || !image || !eventHost || !navigation || !notificationType) {
+  if (!eventPhoto || !eventId || !hostId) {
     return res.status(400).send({
       error: "bad-request",
-      message: "The userId, title, content, image, eventHost, navigation and notificationType of the pust notification user are required",
+      message: "The eventPhoto, eventId and hostId of the notification are required",
     });
   }
 
-  const notificationData = {
-    title,
-    content,
-    image,
-    eventId,
-    eventHost,
-    navigation,
-    notificationType,
-    "isRead": false,
-    "date": Timestamp.now(),
+  const message = {
+    notification: {
+      title: "Event Feedback",
+      body: "The event has ended. Share your thoughts by leaving a review for others!",
+      image: eventPhoto,
+    },
+    data: {
+      notification: "5",
+      information: JSON.stringify({
+        eventId: eventId,
+        eventHost: hostId,
+      }),
+      image: eventPhoto,
+      date: new Date().toISOString(),
+    },
+    android: {
+      notification: {
+        sound: "default",
+        priority: "high",
+        channelId: "high_importance_channel",
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+    topic: `${guestId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
   };
 
   try {
-    await admin.firestore().collection("user").doc(userId).update({
-      notifications: FieldValue.arrayUnion(notificationData),
-    });
-
-    return res.status(200).send({
-      message: "Notification added successfully",
-    });
+    await admin.messaging().send(message);
+    return res.status(200).send({message: "Notification sent successfully"});
   } catch (error) {
-    console.error("Error adding notification:", error);
+    console.error("Error sending sendNotificationEventFinish notification:", error);
     return res.status(500).send({
       error: "internal",
-      message: "Error adding notification",
+      message: "Error sending sendNotificationEventFinish notification",
       details: error.message,
     });
   }
+});
+
+exports.sendNotificationLastMinutes = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
+  const eventData = snap.data();
+
+  const startDate = eventData.startDate.toDate();
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); 
+
+  const eventStartDate = new Date(startDate);
+  eventStartDate.setHours(0, 0, 0, 0); 
+
+  if (eventStartDate.getTime() !== today.getTime()) {
+    console.log("The event is not today. Notification will not be sent.");
+    return null;
+  }
+
+  const message = {
+    notification: {
+      title: "Last-Minute Events",
+      body: "Last-minute events have just popped up. Interested in attending one?",
+      image: eventData.photo,
+    },
+    data: {
+      notification: "6",
+      information: JSON.stringify({
+        eventId: snap.id,
+        eventHost: eventData.hostRef.id,
+      }),
+      image: eventData.photo,
+      date: new Date().toISOString(),
+    },
+    android: {
+      notification: {
+        sound: "default",
+        priority: "high",
+        channelId: "high_importance_channel",
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+    topic: `${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+  };
+
+  try {
+    await admin.messaging().send(message);
+    console.log(`Notification successfully sent to the topic: ${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
+  } catch (error) {
+    console.error("Error sending notification sendNotificationLastMinutes:", error);
+  }
+});
+
+exports.sendNotificationEventsReminderFavorite = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+
+  const endDate = new Date(today);
+  endDate.setUTCDate(today.getUTCDate() + 7);
+  endDate.setUTCHours(23, 59, 59, 999);
+
+  console.log(`Searching for events from today (${today.toISOString().slice(0, 10)}) to ${endDate.toISOString().slice(0, 10)}`);
+
+  try {
+    const snapshot = await db.collection("event")
+        .where("startDate", ">=", today)
+        .where("startDate", "<=", endDate)
+        .get();
+
+    if (snapshot.empty) {
+      console.log("No events found in the next 7 days favorite");
+      return null;
+    }
+
+    snapshot.forEach(async (doc) => {
+      const eventData = doc.data();
+      const eventId = doc.id;
+
+      const startDate = eventData.startDate.toDate();
+      const differenceInTime = startDate.getTime() - today.getTime();
+      const daysLeft = Math.ceil(differenceInTime / (1000 * 3600 * 24));
+
+      console.log(`Event found: ${eventId}`, eventData);
+
+      const message = {
+        notification: {
+          title: "Favorite Event Reminder",
+          body: `The event '${eventData.name}' you favorited is happening in ${daysLeft} days. Are you going to join?`,
+          image: eventData.photo,
+        },
+        data: {
+          notification: "7",
+          information: JSON.stringify({
+            eventId: eventId,
+            eventHost: eventData.hostRef.id,
+          }),
+          image: eventData.photo,
+          date: new Date().toISOString(),
+        },
+        android: {
+          notification: {
+            sound: "default",
+            priority: "high",
+            channelId: "high_importance_channel",
+          },
+        },
+        apns: {
+          payload: {
+            aps: {
+              sound: "default",
+            },
+          },
+        },
+        topic: `favorite-${eventId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+      };
+
+      try {
+        const response = await admin.messaging().send(message);
+        console.log(`Notification sent for the event ${eventId}: ${response}`);
+      } catch (error) {
+        console.error(`Error sending notification for event ${eventId}:`, error);
+      }
+    });
+  } catch (error) {
+    console.error("Error getting events:", error);
+  }
+
+  return null;
 });
