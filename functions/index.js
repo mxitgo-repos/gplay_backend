@@ -316,7 +316,7 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * 1")
   console.log(`Searching for events from today (${today.toISOString().slice(0, 10)}) to ${endDate.toISOString().slice(0, 10)}`);
 
   try {
-    const snapshot = await db.collection("event")
+    const snapshot = await admin.firestore().collection("event")
         .where("startDate", ">=", today)
         .where("startDate", "<=", endDate)
         .get();
@@ -504,7 +504,7 @@ exports.sendNotificationEventsReminderFavorite = functions.pubsub.schedule("0 12
   console.log(`Searching for events from today (${today.toISOString().slice(0, 10)}) to ${endDate.toISOString().slice(0, 10)}`);
 
   try {
-    const snapshot = await db.collection("event")
+    const snapshot = await admin.firestore().collection("event")
         .where("startDate", ">=", today)
         .where("startDate", "<=", endDate)
         .get();
@@ -568,4 +568,233 @@ exports.sendNotificationEventsReminderFavorite = functions.pubsub.schedule("0 12
   }
 
   return null;
+});
+
+exports.sendNotificationNewMessage = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const {userPhoto, userName, hostId, receiverId} = req.body;
+
+  if (!userPhoto || !userName || !hostId) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The userPhoto, userName and hostId of the notification are required",
+    });
+  }
+
+  const message = {
+    notification: {
+      title: "New Message",
+      body: `${userName} just sent you a message. Check it out!`,
+      image: userPhoto,
+    },
+    data: {
+      notification: "8",
+      information: JSON.stringify({
+        eventHost: hostId,
+      }),
+      image: userPhoto,
+      date: new Date().toISOString(),
+    },
+    android: {
+      notification: {
+        sound: "default",
+        priority: "high",
+        channelId: "high_importance_channel",
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+    topic: `chat-${receiverId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+  };
+
+  try {
+    await admin.messaging().send(message);
+    return res.status(200).send({message: "Notification sent successfully"});
+  } catch (error) {
+    console.error("Error sending sendNotificationNewMessage notification:", error);
+    return res.status(500).send({
+      error: "internal",
+      message: "Error sending sendNotificationNewMessage notification",
+      details: error.message,
+    });
+  }
+});
+
+exports.sendNotificationRateApp = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
+  const message = {
+    notification: {
+      title: "Rate the App",
+      body: "We’d love your feedback! Take a moment to rate our app.",
+      image: '',
+    },
+    data: {
+      notification: "9",
+      information: JSON.stringify({
+        eventHost: '',
+      }),
+      image: '',
+      date: new Date().toISOString(),
+    },
+    android: {
+      notification: {
+        sound: "default",
+        priority: "high",
+        channelId: "high_importance_channel",
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+    topic: "allUser",
+  };
+
+  try {
+    const response = await admin.messaging().send(message);
+    console.log(`Notification sent for the event sendNotificationRateApp: ${response}`);
+  } catch (error) {
+    console.error(`Error sending notification for event sendNotificationRateApp:`, error);
+  }
+});
+
+exports.sendNotificationCreateEvent = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
+  
+  const eventInterestsSnapshot = await admin.firestore().collection('eventInterest')
+  .where('isSuggested', '==', false)
+  .get();
+
+  const namesList = [];
+  eventInterestsSnapshot.forEach(doc => {
+    namesList.push(doc.data().name);
+  });
+
+  const randomIndex = Math.floor(Math.random() * namesList.length);
+  const selectedName = namesList[randomIndex];
+  
+  const message = {
+    notification: {
+      title: "Create an Event",
+      body: `Thinking of creating an event for ${selectedName} interest? Get started now!`,
+      image: '',
+    },
+    data: {
+      notification: "10",
+      information: JSON.stringify({
+        eventHost: '',
+      }),
+      image: '',
+      date: new Date().toISOString(),
+    },
+    android: {
+      notification: {
+        sound: "default",
+        priority: "high",
+        channelId: "high_importance_channel",
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+    topic: "allUser",
+  };
+
+  try {
+    const response = await admin.messaging().send(message);
+    console.log(`Notification sent for the event sendNotificationCreateEvent: ${response}`);
+  } catch (error) {
+    console.error(`Error sending notification for event sendNotificationCreateEvent:`, error);
+  }
+});
+
+exports.onUserPasswordReset = functions.auth.user().onUpdate(async (user) => {
+  const uid = user.uid;
+
+  if (user.tokensValidAfterTime) {
+    const notificationData = {
+      title: 'Password Change',
+      content: 'Your password has been changed successfully.',
+      image: '',
+      eventId: '',
+      eventHost: '',
+      navigation: '',
+      notificationType: '11',
+      "isRead": false,
+      "date": Timestamp.now(),
+    };
+
+    try {
+      await admin.firestore().collection("user").doc(uid).update({
+        notifications: FieldValue.arrayUnion(notificationData),
+      });
+  
+      return res.status(200).send({
+        message: "Notification added successfully onUserPasswordReset",
+      });
+    } catch (error) {
+      console.error("Error adding notification onUserPasswordReset:", error);
+      return res.status(500).send({
+        error: "internal",
+        message: "Error adding notification onUserPasswordReset",
+        details: error.message,
+      });
+    }
+  }
+
+  return null;
+});
+
+exports.sendNotificationRecurringEvent = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
+  
+  const message = {
+    notification: {
+      title: "Recurring Event Promotion",
+      body: "You marked your event as recurring! Would you like to promote it with paid advertising?",
+      image: '',
+    },
+    data: {
+      notification: "12",
+      information: JSON.stringify({
+        eventHost: '',
+      }),
+      image: '',
+      date: new Date().toISOString(),
+    },
+    android: {
+      notification: {
+        sound: "default",
+        priority: "high",
+        channelId: "high_importance_channel",
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+    topic: "allUser",
+  };
+
+  try {
+    const response = await admin.messaging().send(message);
+    console.log(`Notification sent for the event sendNotificationRecurringEvent: ${response}`);
+  } catch (error) {
+    console.error(`Error sending notification for event sendNotificationRecurringEvent:`, error);
+  }
 });
