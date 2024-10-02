@@ -633,14 +633,14 @@ exports.sendNotificationRateApp = functions.pubsub.schedule("0 12 * * 1").onRun(
     notification: {
       title: "Rate the App",
       body: "We’d love your feedback! Take a moment to rate our app.",
-      image: '',
+      image: "",
     },
     data: {
       notification: "9",
       information: JSON.stringify({
-        eventHost: '',
+        eventHost: "",
       }),
-      image: '',
+      image: "",
       date: new Date().toISOString(),
     },
     android: {
@@ -669,31 +669,30 @@ exports.sendNotificationRateApp = functions.pubsub.schedule("0 12 * * 1").onRun(
 });
 
 exports.sendNotificationCreateEvent = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
-  
-  const eventInterestsSnapshot = await admin.firestore().collection('eventInterest')
-  .where('isSuggested', '==', false)
-  .get();
+  const eventInterestsSnapshot = await admin.firestore().collection("eventInterest")
+      .where("isSuggested", "==", false)
+      .get();
 
   const namesList = [];
-  eventInterestsSnapshot.forEach(doc => {
+  eventInterestsSnapshot.forEach((doc) => {
     namesList.push(doc.data().name);
   });
 
   const randomIndex = Math.floor(Math.random() * namesList.length);
   const selectedName = namesList[randomIndex];
-  
+
   const message = {
     notification: {
       title: "Create an Event",
       body: `Thinking of creating an event for ${selectedName} interest? Get started now!`,
-      image: '',
+      image: "",
     },
     data: {
       notification: "10",
       information: JSON.stringify({
-        eventHost: '',
+        eventHost: "",
       }),
-      image: '',
+      image: "",
       date: new Date().toISOString(),
     },
     android: {
@@ -721,57 +720,19 @@ exports.sendNotificationCreateEvent = functions.pubsub.schedule("0 12 * * 1").on
   }
 });
 
-exports.onUserPasswordReset = functions.auth.user().onUpdate(async (user) => {
-  const uid = user.uid;
-
-  if (user.tokensValidAfterTime) {
-    const notificationData = {
-      title: 'Password Change',
-      content: 'Your password has been changed successfully.',
-      image: '',
-      eventId: '',
-      eventHost: '',
-      navigation: '',
-      notificationType: '11',
-      "isRead": false,
-      "date": Timestamp.now(),
-    };
-
-    try {
-      await admin.firestore().collection("user").doc(uid).update({
-        notifications: FieldValue.arrayUnion(notificationData),
-      });
-  
-      return res.status(200).send({
-        message: "Notification added successfully onUserPasswordReset",
-      });
-    } catch (error) {
-      console.error("Error adding notification onUserPasswordReset:", error);
-      return res.status(500).send({
-        error: "internal",
-        message: "Error adding notification onUserPasswordReset",
-        details: error.message,
-      });
-    }
-  }
-
-  return null;
-});
-
 exports.sendNotificationRecurringEvent = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
-  
   const message = {
     notification: {
       title: "Recurring Event Promotion",
       body: "You marked your event as recurring! Would you like to promote it with paid advertising?",
-      image: '',
+      image: "",
     },
     data: {
       notification: "12",
       information: JSON.stringify({
-        eventHost: '',
+        eventHost: "",
       }),
-      image: '',
+      image: "",
       date: new Date().toISOString(),
     },
     android: {
