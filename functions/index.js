@@ -124,10 +124,10 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
 
   const {userId, title, content, image, eventId, eventHost, navigation, notificationType} = req.body;
 
-  if (!userId || !title || !content || !image || !eventHost || !navigation || !notificationType) {
+  if (!userId || !title || !content || !image || !navigation || !notificationType) {
     return res.status(400).send({
       error: "bad-request",
-      message: "The userId, title, content, image, eventHost, navigation and notificationType of the pust notification user are required",
+      message: "The userId, title, content, image, navigation and notificationType of the pust notification user are required",
     });
   }
 
@@ -421,7 +421,7 @@ exports.sendNotificationEventFinish = functions.https.onRequest(async (req, res)
         },
       },
     },
-    topic: `${guestId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+    topic: `${eventId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
   };
 
   try {
