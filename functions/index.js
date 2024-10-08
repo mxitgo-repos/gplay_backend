@@ -759,3 +759,58 @@ exports.sendNotificationRecurringEvent = functions.pubsub.schedule("0 12 * * 1")
     console.error(`Error sending notification for event sendNotificationRecurringEvent:`, error);
   }
 });
+
+exports.sendNotificationAdmin = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const {titleMessage, bodyMessage, imageMessage, urlMessage} = req.body;
+
+  if (!titleMessage || !bodyMessage) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The titleMessage and bodyMessage of the notification are required",
+    });
+  }
+
+  const message = {
+    notification: {
+      title: titleMessage,
+      body: bodyMessage
+    },
+    data: {
+      notification: "14",
+      image: imageMessage == undefined && imageMessage == null ? '' : imageMessage,
+      url: urlMessage == undefined && urlMessage == null ? '' : urlMessage,
+      date: new Date().toISOString(),
+    },
+    android: {
+      notification: {
+        sound: "default",
+        priority: "high",
+        channelId: "high_importance_channel",
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+    topic: 'allUser',
+  };
+
+  try {
+    await admin.messaging().send(message);
+    return res.status(200).send({message: "Notification sent successfully"});
+  } catch (error) {
+    console.error("Error sending sendNotificationAdmin notification:", error);
+    return res.status(500).send({
+      error: "internal",
+      message: "Error sending sendNotificationAdmin notification",
+      details: error.message,
+    });
+  }
+});
