@@ -131,32 +131,23 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
     });
   }
 
-  let notificationData = {};
+  let notificationData = {
+    title,
+    content,
+    image,
+    navigation,
+    notificationType,
+    isRead: false,
+    date: Timestamp.now(),
+  };
 
-  if(notificationType != "14") {
-    notificationData = {
-      title,
-      content,
-      image,
-      eventId,
-      eventHost,
-      navigation,
-      notificationType,
-      "isRead": false,
-      "date": Timestamp.now(),
-    };
+  if (notificationType === "14") {
+    notificationData.url = url;
   } else {
-    notificationData = {
-      title,
-      content,
-      image,
-      url,
-      navigation,
-      notificationType,
-      "isRead": false,
-      "date": Timestamp.now(),
-    };
+    notificationData.eventId = eventId;
+    notificationData.eventHost = eventHost;
   }
+
 
 
   try {
