@@ -131,7 +131,7 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
     });
   }
 
-  let notificationData = {
+  const notificationData = {
     title,
     content,
     image,
@@ -147,7 +147,6 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
     notificationData.eventId = eventId;
     notificationData.eventHost = eventHost;
   }
-
 
 
   try {
@@ -784,12 +783,12 @@ exports.sendNotificationAdmin = functions.https.onRequest(async (req, res) => {
   const message = {
     notification: {
       title: titleMessage,
-      body: bodyMessage
+      body: bodyMessage,
     },
     data: {
       notification: "14",
-      image: imageMessage == undefined && imageMessage == null ? '' : imageMessage,
-      url: urlMessage == undefined && urlMessage == null ? '' : urlMessage,
+      image: imageMessage == undefined && imageMessage == null ? "" : imageMessage,
+      url: urlMessage == undefined && urlMessage == null ? "" : urlMessage,
       date: new Date().toISOString(),
     },
     android: {
@@ -806,7 +805,7 @@ exports.sendNotificationAdmin = functions.https.onRequest(async (req, res) => {
         },
       },
     },
-    topic: 'allUser',
+    topic: "allUser",
   };
 
   try {
