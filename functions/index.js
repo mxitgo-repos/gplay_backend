@@ -122,7 +122,7 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
     return res.status(405).send("Method not allowed");
   }
 
-  const {userId, title, content, image, eventId, eventHost, navigation, notificationType} = req.body;
+  const {userId, title, content, image, eventId, eventHost, navigation, notificationType, url} = req.body;
 
   if (!userId || !title || !content || !image || !navigation || !notificationType) {
     return res.status(400).send({
@@ -131,17 +131,33 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
     });
   }
 
-  const notificationData = {
-    title,
-    content,
-    image,
-    eventId,
-    eventHost,
-    navigation,
-    notificationType,
-    "isRead": false,
-    "date": Timestamp.now(),
-  };
+  let notificationData = {};
+
+  if(notificationType != "14") {
+    notificationData = {
+      title,
+      content,
+      image,
+      eventId,
+      eventHost,
+      navigation,
+      notificationType,
+      "isRead": false,
+      "date": Timestamp.now(),
+    };
+  } else {
+    notificationData = {
+      title,
+      content,
+      image,
+      url,
+      navigation,
+      notificationType,
+      "isRead": false,
+      "date": Timestamp.now(),
+    };
+  }
+
 
   try {
     await admin.firestore().collection("user").doc(userId).update({
