@@ -105,9 +105,7 @@ exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
       return lastLogin >= start && lastLogin <= end;
     });
 
-    const count = activeUsers.length;
-
-    return res.status(200).send({count});
+    return res.status(200).send({activeUsers});
   } catch (error) {
     return res.status(500).send({
       error: "internal",
@@ -768,6 +766,17 @@ exports.sendNotificationRecurringEvent = functions.pubsub.schedule("0 12 * * 1")
 });
 
 exports.sendNotificationAdmin = functions.https.onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "POST");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "POST");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    res.set("Access-Control-Max-Age", "3600");
+    return res.status(204).send("");
+  }
+
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
