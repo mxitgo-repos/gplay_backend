@@ -122,18 +122,16 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
 
   const {userId, title, content, image, eventId, eventHost, navigation, notificationType, url} = req.body;
 
-  if (!userId || !title || !content || !image || !navigation || !notificationType) {
+  if (!userId || !title || !content || !notificationType) {
     return res.status(400).send({
       error: "bad-request",
-      message: "The userId, title, content, image, navigation and notificationType of the pust notification user are required",
+      message: "The userId, title, content and notificationType of the pust notification user are required",
     });
   }
 
   const notificationData = {
     title,
     content,
-    image,
-    navigation,
     notificationType,
     isRead: false,
     date: Timestamp.now(),
@@ -141,9 +139,13 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
 
   if (notificationType === "14") {
     notificationData.url = url;
+    notificationData.image = image == undefined && image == null ? "" : image;
+    notificationData.navigation = navigation == undefined && navigation == null ? "" : navigation;
   } else {
     notificationData.eventId = eventId;
     notificationData.eventHost = eventHost;
+    notificationData.image = image == undefined && image == null ? "" : image;
+    notificationData.navigation = navigation == undefined && navigation == null ? "" : navigation;
   }
 
 
