@@ -831,3 +831,61 @@ exports.sendNotificationAdmin = functions.https.onRequest(async (req, res) => {
     });
   }
 });
+
+exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const {userId, eventPhoto, eventId } = req.body;
+
+  if (!userId || !eventPhoto || !eventId) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The userId, eventId and eventPhoto of the notification are required",
+    });
+  }
+
+  const message = {
+    notification: {
+      title: "User Event Question!",
+      body: "Someone has a question about your event. Head over to check it out!",
+      image: eventPhoto,
+    },
+    data: {
+      notification: "13",
+      information: JSON.stringify({
+        eventId: eventId,
+      }),
+      image: eventPhoto,
+      date: new Date().toISOString(),
+    },
+    android: {
+      notification: {
+        sound: "default",
+        priority: "high",
+        channelId: "high_importance_channel",
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+    topic: `${userId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+  };
+
+  try {
+    await admin.messaging().send(message);
+    return res.status(200).send({message: "Notification sent successfully"});
+  } catch (error) {
+    console.error("Error sending sendNotificationQuestionUser notification:", error);
+    return res.status(500).send({
+      error: "internal",
+      message: "Error sending sendNotificationQuestionUser notification",
+      details: error.message,
+    });
+  }
+});
