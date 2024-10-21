@@ -837,7 +837,7 @@ exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res
     return res.status(405).send("Method not allowed");
   }
 
-  const {userId, eventPhoto, eventId } = req.body;
+  const {userId, eventPhoto, eventId} = req.body;
 
   if (!userId || !eventPhoto || !eventId) {
     return res.status(400).send({
