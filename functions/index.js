@@ -896,7 +896,7 @@ exports.createSimulatedTransfer = functions.https.onRequest(async (req, res) => 
     const {amount, currency, paymentMethod} = req.body;
 
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: -Math.abs(amount),
+      amount: amount,
       currency: currency,
       payment_method: paymentMethod,
       confirmation_method: "manual",
