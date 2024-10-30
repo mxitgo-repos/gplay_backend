@@ -2,6 +2,7 @@
 /* eslint-disable max-len */
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
+const stripe = require("stripe")(functions.config().stripe.secret);
 admin.initializeApp();
 
 const {FieldValue, Timestamp} = admin.firestore;
@@ -887,5 +888,25 @@ exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res
       message: "Error sending sendNotificationQuestionUser notification",
       details: error.message,
     });
+  }
+});
+
+exports.createSimulatedTransfer = functions.https.onRequest(async (req, res) => {
+  try {
+    const { amount, currency, payment_method } = req.body;
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: -Math.abs(amount),
+      currency: currency,
+      payment_method: payment_method,
+      confirmation_method: 'manual',
+      confirm: true,
+    });
+
+    res.status(200).send({
+      clientSecret: paymentIntent.client_secret,
+    });
+  } catch (error) {
+    res.status(400).send({ error: error.message });
   }
 });
