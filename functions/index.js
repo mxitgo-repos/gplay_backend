@@ -893,13 +893,13 @@ exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res
 
 exports.createSimulatedTransfer = functions.https.onRequest(async (req, res) => {
   try {
-    const { amount, currency, payment_method } = req.body;
+    const {amount, currency, paymentMethod} = req.body;
 
     const paymentIntent = await stripe.paymentIntents.create({
       amount: -Math.abs(amount),
       currency: currency,
-      payment_method: payment_method,
-      confirmation_method: 'manual',
+      payment_method: paymentMethod,
+      confirmation_method: "manual",
       confirm: true,
     });
 
@@ -907,6 +907,6 @@ exports.createSimulatedTransfer = functions.https.onRequest(async (req, res) => 
       clientSecret: paymentIntent.client_secret,
     });
   } catch (error) {
-    res.status(400).send({ error: error.message });
+    res.status(400).send({error: error.message});
   }
 });
