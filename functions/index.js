@@ -893,20 +893,20 @@ exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res
 
 exports.createPayout = functions.https.onRequest(async (req, res) => {
   try {
-    const { accountId, amount } = req.body;
+    const {accountId, amount} = req.body;
 
     if (!accountId || !amount) {
-      return res.status(400).send({ error: "accountId y amount son requeridos" });
+      return res.status(400).send({error: "accountId y amount son requeridos"});
     }
-    
+
     const payout = await stripe.payouts.create(
-      {
-        amount: parseInt(amount),
-        currency: "usd",
-      },
-      {
-        stripeAccount: accountId,
-      }
+        {
+          amount: parseInt(amount),
+          currency: "usd",
+        },
+        {
+          stripeAccount: accountId,
+        },
     );
 
     res.status(200).send({success: true, payout});
