@@ -891,22 +891,22 @@ exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res
   }
 });
 
-exports.createSimulatedTransfer = functions.https.onRequest(async (req, res) => {
+exports.createCardToken = functions.https.onRequest(async (req, res) => {
   try {
-    const {amount, currency, paymentMethod} = req.body;
+    const { cardNumber, expMonth, expYear, cvc } = req.body;
 
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: amount,
-      currency: currency,
-      payment_method: paymentMethod,
-      confirmation_method: "manual",
-      confirm: true,
+    const token = await stripe.tokens.create({
+      card: {
+        number: cardNumber,
+        exp_month: expMonth,
+        exp_year: expYear,
+        cvc: cvc,
+      },
     });
 
-    res.status(200).send({
-      clientSecret: paymentIntent.client_secret,
-    });
+    res.status(200).send({ token: token.id });
   } catch (error) {
-    res.status(400).send({error: error.message});
+    console.error("Error al crear el token de tarjeta:", error);
+    res.status(500).send({ error: error.message });
   }
 });
