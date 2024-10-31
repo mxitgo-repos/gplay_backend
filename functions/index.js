@@ -891,22 +891,18 @@ exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res
   }
 });
 
-exports.createCardToken = functions.https.onRequest(async (req, res) => {
+exports.attachPaymentMethod = functions.https.onRequest(async (req, res) => {
   try {
-    const {cardNumber, expMonth, expYear, cvc} = req.body;
+    const { accountId, paymentMethodId } = req.body;
 
-    const token = await stripe.tokens.create({
-      card: {
-        number: cardNumber,
-        exp_month: expMonth,
-        exp_year: expYear,
-        cvc: cvc,
-      },
-    });
+    const paymentMethod = await stripe.paymentMethods.attach(
+      paymentMethodId,
+      { customer: accountId }
+    );
 
-    res.status(200).send({token: token.id});
+    res.status(200).send({ success: true, paymentMethod });
   } catch (error) {
-    console.error("Error al crear el token de tarjeta:", error);
-    res.status(500).send({error: error.message});
+    console.error("Error binding PaymentMethod:", error);
+    res.status(500).send({ error: error.message });
   }
 });
