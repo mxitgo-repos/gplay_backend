@@ -893,14 +893,23 @@ exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res
 
 exports.createPayout = functions.https.onRequest(async (req, res) => {
   try {
-    const {accountId, paymentMethodId} = req.body;
+    const { accountId, amount } = req.body;
 
-    const paymentMethod = await stripe.paymentMethods.attach(
-        paymentMethodId,
-        {customer: accountId},
+    if (!accountId || !amount) {
+      return res.status(400).send({ error: "accountId y amount son requeridos" });
+    }
+    
+    const payout = await stripe.payouts.create(
+      {
+        amount: parseInt(amount),
+        currency: "usd",
+      },
+      {
+        stripeAccount: accountId,
+      }
     );
 
-    res.status(200).send({success: true, paymentMethod});
+    res.status(200).send({success: true, payout});
   } catch (error) {
     console.error("Error binding PaymentMethod:", error);
     res.status(500).send({error: error.message});
