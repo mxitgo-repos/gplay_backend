@@ -893,7 +893,7 @@ exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res
 
 exports.createCardToken = functions.https.onRequest(async (req, res) => {
   try {
-    const { cardNumber, expMonth, expYear, cvc } = req.body;
+    const {cardNumber, expMonth, expYear, cvc} = req.body;
 
     const token = await stripe.tokens.create({
       card: {
@@ -904,9 +904,9 @@ exports.createCardToken = functions.https.onRequest(async (req, res) => {
       },
     });
 
-    res.status(200).send({ token: token.id });
+    res.status(200).send({token: token.id});
   } catch (error) {
     console.error("Error al crear el token de tarjeta:", error);
-    res.status(500).send({ error: error.message });
+    res.status(500).send({error: error.message});
   }
 });
