@@ -893,16 +893,16 @@ exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res
 
 exports.attachPaymentMethod = functions.https.onRequest(async (req, res) => {
   try {
-    const { accountId, paymentMethodId } = req.body;
+    const {accountId, paymentMethodId} = req.body;
 
     const paymentMethod = await stripe.paymentMethods.attach(
-      paymentMethodId,
-      { customer: accountId }
+        paymentMethodId,
+        {customer: accountId},
     );
 
-    res.status(200).send({ success: true, paymentMethod });
+    res.status(200).send({success: true, paymentMethod});
   } catch (error) {
     console.error("Error binding PaymentMethod:", error);
-    res.status(500).send({ error: error.message });
+    res.status(500).send({error: error.message});
   }
 });
