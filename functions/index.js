@@ -896,9 +896,9 @@ exports.createPayout = functions.https.onRequest(async (req, res) => {
     const { accountId, amount } = req.body;
 
     if (!accountId || !amount) {
-      return res.status(400).send({ error: "accountId y amount son requeridos" });
+      return res.status(400).send({ error: "accountId and amount are required" });
     }
-    
+
     const payout = await stripe.payouts.create(
       {
         amount: parseInt(amount),
@@ -913,5 +913,25 @@ exports.createPayout = functions.https.onRequest(async (req, res) => {
   } catch (error) {
     console.error("Error binding PaymentMethod:", error);
     res.status(500).send({error: error.message});
+  }
+});
+
+exports.addExternalAccount = functions.https.onRequest(async (req, res) => {
+  try {
+    const { accountId, externalAccountToken } = req.body;
+
+    if (!accountId || !externalAccountToken) {
+      return res.status(400).send({ error: "accountId and externalAccountToken are required" });
+    }
+
+    const externalAccount = await stripe.accounts.createExternalAccount(
+      accountId,
+      { external_account: externalAccountToken }
+    );
+
+    res.status(200).send({ success: true, externalAccount });
+  } catch (error) {
+    console.error("Error adding external account:", error);
+    res.status(500).send({ error: error.message });
   }
 });
