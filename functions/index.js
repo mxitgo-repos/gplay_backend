@@ -935,3 +935,33 @@ exports.addExternalAccount = functions.https.onRequest(async (req, res) => {
     res.status(500).send({error: error.message});
   }
 });
+
+exports.updateAccountVerification = functions.https.onRequest(async (req, res) => {
+  const { accountId, userData } = req.body;
+
+  try {
+    const updatedAccount = await stripe.accounts.update(accountId, {
+      individual: {
+        first_name: userData.firstName,
+        last_name: userData.lastName,
+        dob: {
+          day: userData.dobDay,
+          month: userData.dobMonth,
+          year: userData.dobYear,
+        },
+        address: {
+          line1: userData.addressLine1,
+          city: userData.city,
+          state: userData.state,
+          postal_code: userData.postalCode,
+          country: userData.country,
+        },
+      },
+    });
+
+    res.status(200).send({ success: true, account: updatedAccount });
+  } catch (error) {
+    console.error("Error updating connected account:", error);
+    res.status(500).send({ error: error.message });
+  }
+});
