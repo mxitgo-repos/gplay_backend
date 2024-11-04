@@ -942,6 +942,7 @@ exports.updateAccountVerification = functions.https.onRequest(async (req, res) =
   try {
     const updatedAccount = await stripe.accounts.update(accountId, {
       individual: {
+        business_type: userData.businessType,
         first_name: userData.firstName,
         last_name: userData.lastName,
         dob: {
