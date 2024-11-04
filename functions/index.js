@@ -957,7 +957,7 @@ exports.updateAccountVerification = functions.https.onRequest(async (req, res) =
           postal_code: userData.postalCode,
           country: userData.country,
         },
-        ssn_last_4: userData.ssnLast4,
+        ssn: userData.ssnFull,
         email: userData.email,
         phone: userData.phone, 
       },
