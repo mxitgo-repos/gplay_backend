@@ -937,7 +937,7 @@ exports.addExternalAccount = functions.https.onRequest(async (req, res) => {
 });
 
 exports.updateAccountVerification = functions.https.onRequest(async (req, res) => {
-  const { accountId, userData } = req.body;
+  const {accountId, userData} = req.body;
 
   try {
     const updatedAccount = await stripe.accounts.update(accountId, {
@@ -960,9 +960,9 @@ exports.updateAccountVerification = functions.https.onRequest(async (req, res) =
       },
     });
 
-    res.status(200).send({ success: true, account: updatedAccount });
+    res.status(200).send({success: true, account: updatedAccount});
   } catch (error) {
     console.error("Error updating connected account:", error);
-    res.status(500).send({ error: error.message });
+    res.status(500).send({error: error.message});
   }
 });
