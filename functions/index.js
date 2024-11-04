@@ -959,7 +959,7 @@ exports.updateAccountVerification = functions.https.onRequest(async (req, res) =
         },
         ssn: userData.ssnFull,
         email: userData.email,
-        phone: userData.phone, 
+        phone: userData.phone,
       },
       tos_acceptance: {
         date: userData.tosAcceptanceDate,
@@ -968,7 +968,7 @@ exports.updateAccountVerification = functions.https.onRequest(async (req, res) =
       business_profile: {
         mcc: "5734",
         url: userData.website,
-      }
+      },
     });
 
     res.status(200).send({success: true, account: updatedAccount});
