@@ -956,7 +956,7 @@ exports.addCard = functions.https.onCall(async (data, context) => {
         cvc: data.cvc,
       },
     });
-    return { success: true, cardId: card.id };
+    return {success: true, cardId: card.id};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
@@ -970,7 +970,7 @@ exports.acceptTos = functions.https.onCall(async (data, context) => {
         ip: context.rawRequest.ip,
       },
     });
-    return { success: true };
+    return {success: true};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
