@@ -891,89 +891,36 @@ exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res
   }
 });
 
-exports.createPayout = functions.https.onRequest(async (req, res) => {
+exports.createConnectedAccount = functions.https.onCall(async (data, context) => {
   try {
-    const {accountId, amount} = req.body;
-
-    if (!accountId || !amount) {
-      return res.status(400).send({error: "accountId and amount are required"});
-    }
-
-    const payout = await stripe.payouts.create(
-        {
-          amount: parseInt(amount),
-          currency: "usd",
-        },
-        {
-          stripeAccount: accountId,
-        },
-    );
-
-    res.status(200).send({success: true, payout});
-  } catch (error) {
-    console.error("Error binding PaymentMethod:", error);
-    res.status(500).send({error: error.message});
-  }
-});
-
-exports.addExternalAccount = functions.https.onRequest(async (req, res) => {
-  try {
-    const {accountId, externalAccountToken} = req.body;
-
-    if (!accountId || !externalAccountToken) {
-      return res.status(400).send({error: "accountId and externalAccountToken are required"});
-    }
-
-    const externalAccount = await stripe.accounts.createExternalAccount(
-        accountId,
-        {external_account: externalAccountToken},
-    );
-
-    res.status(200).send({success: true, externalAccount});
-  } catch (error) {
-    console.error("Error adding external account:", error);
-    res.status(500).send({error: error.message});
-  }
-});
-
-exports.updateAccountVerification = functions.https.onRequest(async (req, res) => {
-  const {accountId, userData} = req.body;
-
-  try {
-    const updatedAccount = await stripe.accounts.update(accountId, {
-      business_type: userData.businessType,
-      individual: {
-        first_name: userData.firstName,
-        last_name: userData.lastName,
-        dob: {
-          day: userData.dobDay,
-          month: userData.dobMonth,
-          year: userData.dobYear,
-        },
-        address: {
-          line1: userData.addressLine1,
-          city: userData.city,
-          state: userData.state,
-          postal_code: userData.postalCode,
-          country: userData.country,
-        },
-        ssn: userData.ssnFull,
-        email: userData.email,
-        phone: userData.phone,
-      },
-      tos_acceptance: {
-        date: userData.tosAcceptanceDate,
-        ip: req.ip,
-      },
-      business_profile: {
-        mcc: "5734",
-        url: userData.website,
-      },
+    const account = await stripe.accounts.create({
+      type: "express",
+      country: "US",
+      email: data.email,
     });
 
-    res.status(200).send({success: true, account: updatedAccount});
+    const accountLink = await stripe.accountLinks.create({
+      account: account.id,
+      refresh_url: "https://mxitgo.com/reauth",
+      return_url: "https://mxitgo.com/return",
+      type: "account_onboarding",
+    });
+
+    return { url: accountLink.url };
   } catch (error) {
-    console.error("Error updating connected account:", error);
-    res.status(500).send({error: error.message});
+    throw new functions.https.HttpsError("internal", error.message);
+  }
+});
+
+exports.createTransfer = functions.https.onCall(async (data, context) => {
+  try {
+    const transfer = await stripe.transfers.create({
+      amount: data.amount,
+      currency: "usd",
+      destination: data.accountId,
+    });
+    return { transferId: transfer.id };
+  } catch (error) {
+    throw new functions.https.HttpsError("internal", error.message);
   }
 });
