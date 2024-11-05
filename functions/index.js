@@ -903,7 +903,7 @@ exports.createCustomAccount = functions.https.onCall(async (data, context) => {
         card_payments: {requested: true},
       },
     });
-    return { accountId: account.id };
+    return {accountId: account.id};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
@@ -915,7 +915,7 @@ exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
       individual: {
         first_name: data.firstName,
         last_name: data.lastName,
-        dob: { day: data.day, month: data.month, year: data.year },
+        dob: {day: data.day, month: data.month, year: data.year},
         address: {
           line1: data.line1,
           postal_code: data.postalCode,
@@ -925,7 +925,7 @@ exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
         },
       },
     });
-    return { success: true };
+    return {success: true};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
@@ -936,7 +936,7 @@ exports.addCard = functions.https.onCall(async (data, context) => {
     const card = await stripe.accounts.createExternalAccount(data.accountId, {
       external_account: data.token,
     });
-    return { success: true, cardId: card.id };
+    return {success: true, cardId: card.id};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
@@ -950,7 +950,7 @@ exports.acceptTos = functions.https.onCall(async (data, context) => {
         ip: context.rawRequest.ip,
       },
     });
-    return { success: true };
+    return {success: true};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
@@ -963,7 +963,7 @@ exports.createTransfer = functions.https.onCall(async (data, context) => {
       currency: "mxn",
       destination: data.accountId,
     });
-    return { transferId: transfer.id };
+    return {transferId: transfer.id};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
@@ -977,7 +977,7 @@ exports.createPayout = functions.https.onCall(async (data, context) => {
     }, {
       stripeAccount: data.accountId,
     });
-    return { payoutId: payout.id };
+    return {payoutId: payout.id};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
