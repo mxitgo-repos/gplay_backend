@@ -906,7 +906,7 @@ exports.createConnectedAccount = functions.https.onCall(async (data, context) =>
       type: "account_onboarding",
     });
 
-    return { url: accountLink.url };
+    return {url: accountLink.url};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
@@ -919,7 +919,7 @@ exports.createTransfer = functions.https.onCall(async (data, context) => {
       currency: "usd",
       destination: data.accountId,
     });
-    return { transferId: transfer.id };
+    return {transferId: transfer.id};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
