@@ -934,13 +934,7 @@ exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
 exports.addCard = functions.https.onCall(async (data, context) => {
   try {
     const card = await stripe.accounts.createExternalAccount(data.accountId, {
-      external_account: {
-        object: "card",
-        number: "4242424242424242",
-        exp_month: 12,
-        exp_year: 2028,
-        cvc: "123",
-      },
+      external_account: data.token,
     });
     return { success: true, cardId: card.id };
   } catch (error) {
