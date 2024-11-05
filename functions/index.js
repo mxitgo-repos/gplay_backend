@@ -891,24 +891,44 @@ exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res
   }
 });
 
-exports.createConnectedAccount = functions.https.onCall(async (data, context) => {
+exports.createCustomAccount = functions.https.onCall(async (data, context) => {
   try {
     const account = await stripe.accounts.create({
-      type: "express",
-      country: "US",
+      type: "custom",
+      country: data.country,
       email: data.email,
+      business_type: "individual",
+      capabilities: {
+        transfers: { requested: true },
+        card_payments: { requested: true },
+      },
     });
-
-    const accountLink = await stripe.accountLinks.create({
-      account: account.id,
-      refresh_url: "https://mxitgo.com/reauth",
-      return_url: "https://mxitgo.com/return",
-      type: "account_onboarding",
-    });
-
-    return {url: accountLink.url};
+    return { accountId: account.id };
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
+  }
+});
+
+
+exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
+  try {
+    await stripe.accounts.update(data.accountId, {
+      individual: {
+        first_name: data.firstName,
+        last_name: data.lastName,
+        dob: { day: data.day, month: data.month, year: data.year },
+        address: {
+          line1: data.line1,
+          postal_code: data.postalCode,
+          city: data.city,
+          state: data.state,
+          country: data.country,
+        },
+      },
+    });
+    return { success: true };
+  } catch (error) {
+    throw new functions.https.HttpsError('internal', error.message);
   }
 });
 
@@ -919,7 +939,7 @@ exports.createTransfer = functions.https.onCall(async (data, context) => {
       currency: "usd",
       destination: data.accountId,
     });
-    return {transferId: transfer.id};
+    return { transferId: transfer.id };
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
