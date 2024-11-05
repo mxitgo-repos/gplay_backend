@@ -944,3 +944,34 @@ exports.createTransfer = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError("internal", error.message);
   }
 });
+
+exports.addCard = functions.https.onCall(async (data, context) => {
+  try {
+    const card = await stripe.accounts.createExternalAccount(data.accountId, {
+      external_account: {
+        object: "card",
+        number: data.number,
+        exp_month: data.exp_month,
+        exp_year: data.exp_year,
+        cvc: data.cvc,
+      },
+    });
+    return { success: true, cardId: card.id };
+  } catch (error) {
+    throw new functions.https.HttpsError("internal", error.message);
+  }
+});
+
+exports.acceptTos = functions.https.onCall(async (data, context) => {
+  try {
+    await stripe.accounts.update(data.accountId, {
+      tos_acceptance: {
+        date: Math.floor(Date.now() / 1000),
+        ip: context.rawRequest.ip,
+      },
+    });
+    return { success: true };
+  } catch (error) {
+    throw new functions.https.HttpsError("internal", error.message);
+  }
+});
