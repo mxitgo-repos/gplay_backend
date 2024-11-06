@@ -911,11 +911,11 @@ exports.createCustomAccount = functions.https.onCall(async (data, context) => {
 
 exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
   try {
-    let accountData = {
+    const accountData = {
       individual: {
         first_name: data.firstName,
         last_name: data.lastName,
-        dob: { day: data.day, month: data.month, year: data.year },
+        dob: {day: data.day, month: data.month, year: data.year},
         address: {
           line1: data.line1,
           postal_code: data.postalCode,
@@ -936,7 +936,7 @@ exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
       },
     };
 
-    if (data.country === 'MX') {
+    if (data.country === "MX") {
       accountData.individual.id_number = data.rfc;
       accountData.individual.verification = {
         document: {
@@ -944,11 +944,11 @@ exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
           back: data.documentBack,
         },
       };
-    } else if (data.country === 'US') {
+    } else if (data.country === "US") {
       accountData.individual.ssn_last_4 = data.ssn;
     }
 
-    await stripe.accounts.update(data.accountId,accountData);
+    await stripe.accounts.update(data.accountId, accountData);
     return {success: true};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
@@ -990,7 +990,7 @@ exports.uploadDocument = functions.https.onCall(async (data, context) => {
         type: "application/octet-stream",
       },
     });
-    return { fileId: documentFile.id };
+    return {fileId: documentFile.id};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
