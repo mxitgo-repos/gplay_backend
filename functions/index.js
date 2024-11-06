@@ -911,11 +911,11 @@ exports.createCustomAccount = functions.https.onCall(async (data, context) => {
 
 exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
   try {
-    await stripe.accounts.update(data.accountId, {
+    let accountData = {
       individual: {
         first_name: data.firstName,
         last_name: data.lastName,
-        dob: {day: data.day, month: data.month, year: data.year},
+        dob: { day: data.day, month: data.month, year: data.year },
         address: {
           line1: data.line1,
           postal_code: data.postalCode,
@@ -925,9 +925,6 @@ exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
         },
         email: data.email,
         phone: data.phone,
-        metadata: {
-          rfc: data.rfc,
-        },
       },
       business_profile: {
         mcc: data.mcc,
@@ -937,7 +934,21 @@ exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
         date: Math.floor(Date.now() / 1000),
         ip: context.rawRequest.ip,
       },
-    });
+    };
+
+    if (data.country === 'MX') {
+      accountData.individual.id_number = data.rfc;
+      accountData.individual.verification = {
+        document: {
+          front: data.documentFront,
+          back: data.documentBack,
+        },
+      };
+    } else if (data.country === 'US') {
+      accountData.individual.ssn_last_4 = data.ssn;
+    }
+
+    await stripe.accounts.update(data.accountId,accountData);
     return {success: true};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
@@ -964,6 +975,22 @@ exports.acceptTos = functions.https.onCall(async (data, context) => {
       },
     });
     return {success: true};
+  } catch (error) {
+    throw new functions.https.HttpsError("internal", error.message);
+  }
+});
+
+exports.uploadDocument = functions.https.onCall(async (data, context) => {
+  try {
+    const documentFile = await stripe.files.create({
+      purpose: "identity_document",
+      file: {
+        data: Buffer.from(data.documentData, "base64"),
+        name: "document.jpg",
+        type: "application/octet-stream",
+      },
+    });
+    return { fileId: documentFile.id };
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
