@@ -923,13 +923,13 @@ exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
           state: data.state,
           country: data.country,
         },
+        email: data.email,
+        phone: data.phone,
       },
       business_profile: {
         mcc: data.mcc,
         url: data.website,
       },
-      email: data.email,
-      phone: data.phone,
       metadata: {
         rfc: data.rfc,
       },
