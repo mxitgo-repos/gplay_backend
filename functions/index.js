@@ -925,13 +925,13 @@ exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
         },
         email: data.email,
         phone: data.phone,
+        metadata: {
+          rfc: data.rfc,
+        },
       },
       business_profile: {
         mcc: data.mcc,
         url: data.website,
-      },
-      metadata: {
-        rfc: data.rfc,
       },
       tos_acceptance: {
         date: Math.floor(Date.now() / 1000),
