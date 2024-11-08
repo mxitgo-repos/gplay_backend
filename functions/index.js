@@ -946,6 +946,12 @@ exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
       };
     } else if (data.country === "US") {
       accountData.individual.ssn_last_4 = data.ssn;
+      accountData.individual.verification = {
+        document: {
+          front: data.documentFront,
+          back: data.documentBack,
+        },
+      };
     }
 
     await stripe.accounts.update(data.accountId, accountData);
@@ -1000,7 +1006,7 @@ exports.createTransfer = functions.https.onCall(async (data, context) => {
   try {
     const transfer = await stripe.transfers.create({
       amount: data.amount,
-      currency: "mxn",
+      currency: "usd",
       destination: data.accountId,
     });
     return {transferId: transfer.id};
@@ -1013,7 +1019,7 @@ exports.createPayout = functions.https.onCall(async (data, context) => {
   try {
     const payout = await stripe.payouts.create({
       amount: data.amount,
-      currency: "mxn",
+      currency: "usd",
     }, {
       stripeAccount: data.accountId,
     });
