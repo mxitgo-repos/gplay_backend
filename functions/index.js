@@ -1006,7 +1006,7 @@ exports.createTransfer = functions.https.onCall(async (data, context) => {
   try {
     const transfer = await stripe.transfers.create({
       amount: data.amount,
-      currency: "usd",
+      currency: "mxn",
       destination: data.accountId,
     });
     return {transferId: transfer.id};
@@ -1019,7 +1019,7 @@ exports.createPayout = functions.https.onCall(async (data, context) => {
   try {
     const payout = await stripe.payouts.create({
       amount: data.amount,
-      currency: "usd",
+      currency: "mxn",
     }, {
       stripeAccount: data.accountId,
     });
