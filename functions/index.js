@@ -1037,7 +1037,7 @@ exports.getBankAccount = functions.https.onCall(async (data, context) => {
       object: "bank_account",
     });
 
-    return { bankAccounts: bankAccounts.data };
+    return {bankAccounts: bankAccounts.data};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
