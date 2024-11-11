@@ -1028,3 +1028,17 @@ exports.createPayout = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError("internal", error.message);
   }
 });
+
+exports.getBankAccount = functions.https.onCall(async (data, context) => {
+  try {
+    const accountId = data.accountId;
+
+    const bankAccounts = await stripe.accounts.listExternalAccounts(accountId, {
+      object: "bank_account",
+    });
+
+    return { bankAccounts: bankAccounts.data };
+  } catch (error) {
+    throw new functions.https.HttpsError("internal", error.message);
+  }
+});
