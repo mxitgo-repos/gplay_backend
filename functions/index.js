@@ -1015,21 +1015,6 @@ exports.createTransfer = functions.https.onCall(async (data, context) => {
   }
 });
 
-exports.createTransferSource = functions.https.onCall(async (data, context) => {
-  try {
-    const transfer = await stripe.transfers.create({
-      amount: data.amount,
-      currency: "mxn",
-      destination: data.accountId,
-      source: data.cardId,
-    });
-    return {transferId: transfer.id};
-  } catch (error) {
-    throw new functions.https.HttpsError("internal", error.message);
-  }
-});
-
-
 exports.createPayout = functions.https.onCall(async (data, context) => {
   try {
     const payout = await stripe.payouts.create({
