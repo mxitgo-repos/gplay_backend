@@ -1049,7 +1049,6 @@ exports.createPayoutDestination = functions.https.onCall(async (data, context) =
     const payout = await stripe.payouts.create({
       amount: data.amount,
       currency: "mxn",
-      method: "instant",
       destination: data.cardId,
     }, {
       stripeAccount: data.accountId,
