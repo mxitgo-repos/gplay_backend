@@ -1058,3 +1058,31 @@ exports.getBankAccount = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError("internal", error.message);
   }
 });
+
+exports.addBankAccount = functions.https.onCall(async (data, context) => {
+  try {
+    const accountId = data.accountId;
+    const clabeNumber = data.clabeNumber;
+    const userName = data.userName;
+    const countryCode = data.countryCode;
+    const currency = data.currency;
+
+    const token = await stripe.tokens.create({
+      bank_account: {
+        country: countryCode,
+        currency: currency,
+        account_holder_name: userName,
+        account_holder_type: "individual",
+        account_number: clabeNumber,
+      },
+    });
+
+    const bankAccount = await stripe.accounts.createExternalAccount(accountId, {
+      external_account: token.id,
+    });
+
+    return { success: true, bankAccountId: bankAccount.id };
+  } catch (error) {
+    throw new functions.https.HttpsError("internal", error.message);
+  }
+});
