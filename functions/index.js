@@ -1044,7 +1044,6 @@ exports.createPayoutDestination = functions.https.onCall(async (data, context) =
   }
 });
 
-
 exports.getBankAccount = functions.https.onCall(async (data, context) => {
   try {
     const accountId = data.accountId;
@@ -1082,6 +1081,25 @@ exports.addBankAccount = functions.https.onCall(async (data, context) => {
     });
 
     return {success: true, bankAccountId: bankAccount.id};
+  } catch (error) {
+    throw new functions.https.HttpsError("internal", error.message);
+  }
+});
+
+exports.addFundsToMainAccount = functions.https.onCall(async (data, context) => {
+  try {
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: "10000",
+      currency: "mxn",
+      payment_method_types: ["card"],
+      description: "Simulated top-up for main account",
+    });
+
+    return {
+      success: true,
+      paymentIntentId: paymentIntent.id,
+      clientSecret: paymentIntent.client_secret,
+    };
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
