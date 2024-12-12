@@ -1081,7 +1081,7 @@ exports.addBankAccount = functions.https.onCall(async (data, context) => {
       external_account: token.id,
     });
 
-    return { success: true, bankAccountId: bankAccount.id };
+    return {success: true, bankAccountId: bankAccount.id};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
