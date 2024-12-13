@@ -1090,20 +1090,20 @@ exports.createTestTokenAndConfirmPayment = functions.https.onCall(async (data, c
   try {
     const token = await stripe.tokens.create({
       card: {
-        number: '4242424242424242',
+        number: "4242424242424242",
         exp_month: 12,
         exp_year: 2024,
-        cvc: '123',
+        cvc: "123",
       },
     });
 
     const paymentIntent = await stripe.paymentIntents.create({
       amount: "10000",
-      currency: 'mxn',
+      currency: "mxn",
       payment_method: token.id,
-      confirmation_method: 'automatic',
+      confirmation_method: "automatic",
       confirm: true,
-      description: 'Simulated top-up for main account',
+      description: "Simulated top-up for main account",
     });
 
     return {
@@ -1112,6 +1112,6 @@ exports.createTestTokenAndConfirmPayment = functions.https.onCall(async (data, c
       status: paymentIntent.status,
     };
   } catch (error) {
-    throw new functions.https.HttpsError('internal', error.message);
+    throw new functions.https.HttpsError("internal", error.message);
   }
 });
