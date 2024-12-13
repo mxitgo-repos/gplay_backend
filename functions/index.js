@@ -1088,9 +1088,9 @@ exports.addBankAccount = functions.https.onCall(async (data, context) => {
 
 exports.createPaymentIntent = functions.https.onRequest(async (req, res) => {
   try {
-    const { amount, currency } = req.body;
+    const {amount, currency} = req.body;
     if (!amount || !currency) {
-      res.status(400).send({ error: "error" });
+      res.status(400).send({error: "error"});
       return;
     }
 
@@ -1104,6 +1104,6 @@ exports.createPaymentIntent = functions.https.onRequest(async (req, res) => {
     });
   } catch (error) {
     console.error("Error al crear PaymentIntent:", error);
-    res.status(500).send({ error: error.message });
+    res.status(500).send({error: error.message});
   }
 });
