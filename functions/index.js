@@ -1091,15 +1091,26 @@ exports.addFundsToMainAccount = functions.https.onCall(async (data, context) => 
     const paymentIntent = await stripe.paymentIntents.create({
       amount: "10000",
       currency: "mxn",
-      payment_method_types: ["card"],
+      payment_method: {
+        card: {
+          number: "4242424242424242",
+          exp_month: 12,
+          exp_year: 2024,
+          cvc: "123",
+        },
+      },
+      confirm: true,
       description: "Simulated top-up for main account",
     });
 
-    return {
-      success: true,
-      paymentIntentId: paymentIntent.id,
-      clientSecret: paymentIntent.client_secret,
-    };
+    if (paymentIntent.status === "succeeded") {
+      return {
+        success: true,
+        paymentIntentId: paymentIntent.id,
+      };
+    } else {
+      throw new Error("Payment not successful.");
+    }
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
