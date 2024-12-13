@@ -1086,23 +1086,24 @@ exports.addBankAccount = functions.https.onCall(async (data, context) => {
   }
 });
 
-exports.createTestPaymentIntent = functions.https.onCall(async (data, context) => {
+exports.createPaymentIntent = functions.https.onRequest(async (req, res) => {
   try {
+    const { amount, currency } = req.body;
+    if (!amount || !currency) {
+      res.status(400).send({ error: "error" });
+      return;
+    }
+
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: "10000",
-      currency: "mxn",
-      payment_method: "tok_visa",
-      confirmation_method: "automatic",
-      confirm: true,
-      description: "Simulated top-up for main account",
+      amount,
+      currency,
     });
 
-    return {
-      success: true,
-      paymentIntentId: paymentIntent.id,
-      status: paymentIntent.status,
-    };
+    res.status(200).send({
+      clientSecret: paymentIntent.client_secret,
+    });
   } catch (error) {
-    throw new functions.https.HttpsError("internal", error.message);
+    console.error("Error al crear PaymentIntent:", error);
+    res.status(500).send({ error: error.message });
   }
 });
