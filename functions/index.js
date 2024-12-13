@@ -1086,21 +1086,12 @@ exports.addBankAccount = functions.https.onCall(async (data, context) => {
   }
 });
 
-exports.createTestTokenAndConfirmPayment = functions.https.onCall(async (data, context) => {
+exports.createTestPaymentIntent = functions.https.onCall(async (data, context) => {
   try {
-    const token = await stripe.tokens.create({
-      card: {
-        number: "4242424242424242",
-        exp_month: 12,
-        exp_year: 2024,
-        cvc: "123",
-      },
-    });
-
     const paymentIntent = await stripe.paymentIntents.create({
       amount: "10000",
       currency: "mxn",
-      payment_method: token.id,
+      payment_method: "tok_visa",
       confirmation_method: "automatic",
       confirm: true,
       description: "Simulated top-up for main account",
