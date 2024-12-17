@@ -1086,24 +1086,15 @@ exports.addBankAccount = functions.https.onCall(async (data, context) => {
   }
 });
 
-exports.createPaymentIntent = functions.https.onRequest(async (req, res) => {
+exports.createPaymentIntent = functions.https.onCall(async (data, context) => {
   try {
-    const {amount, currency} = req.body;
-    if (!amount || !currency) {
-      res.status(400).send({error: "error"});
-      return;
-    }
-
     const paymentIntent = await stripe.paymentIntents.create({
-      amount,
-      currency,
+      amount: data.amount,
+      currency: data.currency,
     });
 
-    res.status(200).send({
-      clientSecret: paymentIntent.client_secret,
-    });
+    return {success: true, clientSecret: paymentIntent.client_secret};
   } catch (error) {
-    console.error("Error al crear PaymentIntent:", error);
-    res.status(500).send({error: error.message});
+    throw new functions.https.HttpsError("internal", error.message);
   }
 });
