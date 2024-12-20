@@ -330,48 +330,91 @@ exports.sendNotificationInviteUser = functions.https.onRequest(async (req, res) 
   }
 });
 
-// exports.sendNotificationByState = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
-//   const eventData = snap.data();
+exports.sendNotificationByState = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
+  const eventData = snap.data();
 
-//   const message = {
-//     notification: {
-//       title: "New Events Nearby!",
-//       body: "New events just popped up near you! Dive in and see what's happening around town!",
-//       image: eventData.photo,
-//     },
-//     data: {
-//       notification: "3",
-//       information: JSON.stringify({
-//         eventId: snap.id,
-//         eventHost: eventData.hostRef.id,
-//       }),
-//       image: eventData.photo,
-//       date: new Date().toISOString(),
-//     },
-//     android: {
-//       notification: {
-//         sound: "default",
-//         priority: "high",
-//         channelId: "high_importance_channel",
-//       },
-//     },
-//     apns: {
-//       payload: {
-//         aps: {
-//           sound: "default",
-//         },
-//       },
-//     },
-//     topic: `${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
-//   };
+  const message = {
+    notification: {
+      title: "New Events Nearby!",
+      body: "New events just popped up near you! Dive in and see what's happening around town!",
+      image: eventData.photo,
+    },
+    data: {
+      notification: "3",
+      information: JSON.stringify({
+        eventId: snap.id,
+        eventHost: eventData.hostRef.id,
+      }),
+      image: eventData.photo,
+      date: new Date().toISOString(),
+    },
+    android: {
+      notification: {
+        sound: "default",
+        priority: "high",
+        channelId: "high_importance_channel",
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+    topic: `${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+  };
 
-//   try {
-//     await admin.messaging().send(message);
-//     console.log(`Notification successfully sent to the topic: ${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
-//   } catch (error) {
-//     console.error("Error sending notification sendNotificationByState:", error);
-//   }
-// });
+  try {
+    await admin.messaging().send(message);
+    console.log(`Notification successfully sent to the topic: ${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
+
+    const usersRef = admin.firestore().collection("user")
+        .where("state", "==", eventData.state);
+
+    const batchSize = 500;
+    let lastDoc = null;
+    let hasMoreDocuments = true;
+
+    while (hasMoreDocuments) {
+      let query = usersRef.limit(batchSize);
+      if (lastDoc) {
+        query = query.startAfter(lastDoc);
+      }
+
+      const usersSnapshot = await query.get();
+      if (usersSnapshot.empty) {
+        hasMoreDocuments = false;
+        break;
+      }
+
+      const batch = admin.firestore().batch();
+      usersSnapshot.forEach((doc) => {
+        const userRef = doc.ref;
+        batch.update(userRef, {
+          notifications: admin.firestore.FieldValue.arrayUnion({
+            title: "New Events Nearby!",
+            content: "New events just popped up near you! Dive in and see what's happening around town!",
+            notificationType: "3",
+            isRead: false,
+            date: Timestamp.now(),
+            image: eventData.photo,
+            eventId: snap.id,
+            eventHost: eventData.hostRef.id,
+            navigation: "eventdetail",
+          }),
+        });
+      });
+
+      await batch.commit();
+      lastDoc = usersSnapshot.docs[usersSnapshot.docs.length - 1];
+    }
+
+    console.log("Notifications successfully added to user documents.");
+  } catch (error) {
+    console.error("Error sending notification sendNotificationByState:", error);
+  }
+});
 
 // exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
 //   const today = new Date();
