@@ -116,57 +116,57 @@ exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
-  if (req.method !== "POST") {
-    return res.status(405).send("Method not allowed");
-  }
+// exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
+//   if (req.method !== "POST") {
+//     return res.status(405).send("Method not allowed");
+//   }
 
-  const {userId, title, content, image, eventId, eventHost, navigation, notificationType, url} = req.body;
+//   const {userId, title, content, image, eventId, eventHost, navigation, notificationType, url} = req.body;
 
-  if (!userId || !title || !content || !notificationType) {
-    return res.status(400).send({
-      error: "bad-request",
-      message: "The userId, title, content and notificationType of the pust notification user are required",
-    });
-  }
+//   if (!userId || !title || !content || !notificationType) {
+//     return res.status(400).send({
+//       error: "bad-request",
+//       message: "The userId, title, content and notificationType of the pust notification user are required",
+//     });
+//   }
 
-  const notificationData = {
-    title,
-    content,
-    notificationType,
-    isRead: false,
-    date: Timestamp.now(),
-  };
+//   const notificationData = {
+//     title,
+//     content,
+//     notificationType,
+//     isRead: false,
+//     date: Timestamp.now(),
+//   };
 
-  if (notificationType === "14") {
-    notificationData.url = url;
-    notificationData.image = image == undefined && image == null ? "" : image;
-    notificationData.navigation = navigation == undefined && navigation == null ? "" : navigation;
-  } else {
-    notificationData.eventId = eventId;
-    notificationData.eventHost = eventHost;
-    notificationData.image = image == undefined && image == null ? "" : image;
-    notificationData.navigation = navigation == undefined && navigation == null ? "" : navigation;
-  }
+//   if (notificationType === "14") {
+//     notificationData.url = url;
+//     notificationData.image = image == undefined && image == null ? "" : image;
+//     notificationData.navigation = navigation == undefined && navigation == null ? "" : navigation;
+//   } else {
+//     notificationData.eventId = eventId;
+//     notificationData.eventHost = eventHost;
+//     notificationData.image = image == undefined && image == null ? "" : image;
+//     notificationData.navigation = navigation == undefined && navigation == null ? "" : navigation;
+//   }
 
 
-  try {
-    await admin.firestore().collection("user").doc(userId).update({
-      notifications: FieldValue.arrayUnion(notificationData),
-    });
+//   try {
+//     await admin.firestore().collection("user").doc(userId).update({
+//       notifications: FieldValue.arrayUnion(notificationData),
+//     });
 
-    return res.status(200).send({
-      message: "Notification added successfully",
-    });
-  } catch (error) {
-    console.error("Error adding notification:", error);
-    return res.status(500).send({
-      error: "internal",
-      message: "Error adding notification",
-      details: error.message,
-    });
-  }
-});
+//     return res.status(200).send({
+//       message: "Notification added successfully",
+//     });
+//   } catch (error) {
+//     console.error("Error adding notification:", error);
+//     return res.status(500).send({
+//       error: "internal",
+//       message: "Error adding notification",
+//       details: error.message,
+//     });
+//   }
+// });
 
 exports.sendNotificationByInterest = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
   const eventData = snap.data();
@@ -206,6 +206,50 @@ exports.sendNotificationByInterest = functions.firestore.document("event/{eventI
   try {
     await admin.messaging().send(message);
     console.log(`Notification successfully sent to the topic: ${eventData.interestList.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}-${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
+
+    const usersRef = admin.firestore().collection("user")
+        .where("eventInterest", "array-contains", eventData.interestList)
+        .where("state", "==", eventData.state);
+
+    const batchSize = 500;
+    let lastDoc = null;
+    let hasMoreDocuments = true;
+
+    while (hasMoreDocuments) {
+      let query = usersRef.limit(batchSize);
+      if (lastDoc) {
+        query = query.startAfter(lastDoc);
+      }
+
+      const usersSnapshot = await query.get();
+      if (usersSnapshot.empty) {
+        hasMoreDocuments = false;
+        break;
+      }
+
+      const batch = admin.firestore().batch();
+      usersSnapshot.forEach((doc) => {
+        const userRef = doc.ref;
+        batch.update(userRef, {
+          notifications: admin.firestore.FieldValue.arrayUnion({
+            title: "Event Just for You!",
+            content: "We found an event that matches your interests. Don’t miss out—check it out now and see if it’s the perfect fit!",
+            notificationType: "1",
+            isRead: false,
+            date: Timestamp.now(),
+            image: eventData.photo,
+            eventId: snap.id,
+            eventHost: eventData.hostRef.id,
+            navigation: "eventdetail",
+          }),
+        });
+      });
+
+      await batch.commit();
+      lastDoc = usersSnapshot.docs[usersSnapshot.docs.length - 1];
+    }
+
+    console.log("Notifications successfully added to user documents.");
   } catch (error) {
     console.error("Error sending notification sendNotificationByInterest:", error);
   }
@@ -258,6 +302,23 @@ exports.sendNotificationInviteUser = functions.https.onRequest(async (req, res) 
 
   try {
     await admin.messaging().send(message);
+    console.log(`Notification successfully sent to the topic: ${guestId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
+
+    await admin.firestore().collection("user").doc(guestId).update({
+      notifications: FieldValue.arrayUnion({
+        title: "You've Got an Invite!",
+        content: `${inviteUser} just invited you to join the event ${eventName}! Ready to RSVP? Accept or decline—it’s your call!`,
+        notificationType: "2",
+        isRead: false,
+        date: Timestamp.now(),
+        image: eventPhoto,
+        eventId: eventId,
+        eventHost: "",
+        navigation: "myevents",
+      }),
+    });
+
+    console.log("Notifications successfully added to user documents.");
     return res.status(200).send({message: "Notification sent successfully"});
   } catch (error) {
     console.error("Error sending sendNotificationInviteUser notification:", error);
@@ -269,627 +330,627 @@ exports.sendNotificationInviteUser = functions.https.onRequest(async (req, res) 
   }
 });
 
-exports.sendNotificationByState = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
-  const eventData = snap.data();
+// exports.sendNotificationByState = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
+//   const eventData = snap.data();
 
-  const message = {
-    notification: {
-      title: "New Events Nearby!",
-      body: "New events just popped up near you! Dive in and see what's happening around town!",
-      image: eventData.photo,
-    },
-    data: {
-      notification: "3",
-      information: JSON.stringify({
-        eventId: snap.id,
-        eventHost: eventData.hostRef.id,
-      }),
-      image: eventData.photo,
-      date: new Date().toISOString(),
-    },
-    android: {
-      notification: {
-        sound: "default",
-        priority: "high",
-        channelId: "high_importance_channel",
-      },
-    },
-    apns: {
-      payload: {
-        aps: {
-          sound: "default",
-        },
-      },
-    },
-    topic: `${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
-  };
+//   const message = {
+//     notification: {
+//       title: "New Events Nearby!",
+//       body: "New events just popped up near you! Dive in and see what's happening around town!",
+//       image: eventData.photo,
+//     },
+//     data: {
+//       notification: "3",
+//       information: JSON.stringify({
+//         eventId: snap.id,
+//         eventHost: eventData.hostRef.id,
+//       }),
+//       image: eventData.photo,
+//       date: new Date().toISOString(),
+//     },
+//     android: {
+//       notification: {
+//         sound: "default",
+//         priority: "high",
+//         channelId: "high_importance_channel",
+//       },
+//     },
+//     apns: {
+//       payload: {
+//         aps: {
+//           sound: "default",
+//         },
+//       },
+//     },
+//     topic: `${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+//   };
 
-  try {
-    await admin.messaging().send(message);
-    console.log(`Notification successfully sent to the topic: ${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
-  } catch (error) {
-    console.error("Error sending notification sendNotificationByState:", error);
-  }
-});
+//   try {
+//     await admin.messaging().send(message);
+//     console.log(`Notification successfully sent to the topic: ${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
+//   } catch (error) {
+//     console.error("Error sending notification sendNotificationByState:", error);
+//   }
+// });
 
-exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
+// exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
+//   const today = new Date();
+//   today.setUTCHours(0, 0, 0, 0);
 
-  const endDate = new Date(today);
-  endDate.setUTCDate(today.getUTCDate() + 7);
-  endDate.setUTCHours(23, 59, 59, 999);
+//   const endDate = new Date(today);
+//   endDate.setUTCDate(today.getUTCDate() + 7);
+//   endDate.setUTCHours(23, 59, 59, 999);
 
-  console.log(`Searching for events from today (${today.toISOString().slice(0, 10)}) to ${endDate.toISOString().slice(0, 10)}`);
+//   console.log(`Searching for events from today (${today.toISOString().slice(0, 10)}) to ${endDate.toISOString().slice(0, 10)}`);
 
-  try {
-    const snapshot = await admin.firestore().collection("event")
-        .where("startDate", ">=", today)
-        .where("startDate", "<=", endDate)
-        .get();
+//   try {
+//     const snapshot = await admin.firestore().collection("event")
+//         .where("startDate", ">=", today)
+//         .where("startDate", "<=", endDate)
+//         .get();
 
-    if (snapshot.empty) {
-      console.log("No events found in the next 7 days");
-      return null;
-    }
+//     if (snapshot.empty) {
+//       console.log("No events found in the next 7 days");
+//       return null;
+//     }
 
-    snapshot.forEach(async (doc) => {
-      const eventData = doc.data();
-      const eventId = doc.id;
+//     snapshot.forEach(async (doc) => {
+//       const eventData = doc.data();
+//       const eventId = doc.id;
 
-      console.log(`Event found: ${eventId}`, eventData);
+//       console.log(`Event found: ${eventId}`, eventData);
 
-      const message = {
-        notification: {
-          title: "Event Reminder!",
-          body: `Your event '${eventData.name}' is coming up soon! Are you ready for it?`,
-          image: eventData.photo,
-        },
-        data: {
-          notification: "4",
-          information: JSON.stringify({
-            eventId: eventId,
-            eventHost: eventData.hostRef.id,
-          }),
-          image: eventData.photo,
-          date: new Date().toISOString(),
-        },
-        android: {
-          notification: {
-            sound: "default",
-            priority: "high",
-            channelId: "high_importance_channel",
-          },
-        },
-        apns: {
-          payload: {
-            aps: {
-              sound: "default",
-            },
-          },
-        },
-        topic: `${eventId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
-      };
+//       const message = {
+//         notification: {
+//           title: "Event Reminder!",
+//           body: `Your event '${eventData.name}' is coming up soon! Are you ready for it?`,
+//           image: eventData.photo,
+//         },
+//         data: {
+//           notification: "4",
+//           information: JSON.stringify({
+//             eventId: eventId,
+//             eventHost: eventData.hostRef.id,
+//           }),
+//           image: eventData.photo,
+//           date: new Date().toISOString(),
+//         },
+//         android: {
+//           notification: {
+//             sound: "default",
+//             priority: "high",
+//             channelId: "high_importance_channel",
+//           },
+//         },
+//         apns: {
+//           payload: {
+//             aps: {
+//               sound: "default",
+//             },
+//           },
+//         },
+//         topic: `${eventId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+//       };
 
-      try {
-        const response = await admin.messaging().send(message);
-        console.log(`Notification sent for the event ${eventId}: ${response}`);
-      } catch (error) {
-        console.error(`Error sending notification for event ${eventId}:`, error);
-      }
-    });
-  } catch (error) {
-    console.error("Error getting events:", error);
-  }
+//       try {
+//         const response = await admin.messaging().send(message);
+//         console.log(`Notification sent for the event ${eventId}: ${response}`);
+//       } catch (error) {
+//         console.error(`Error sending notification for event ${eventId}:`, error);
+//       }
+//     });
+//   } catch (error) {
+//     console.error("Error getting events:", error);
+//   }
 
-  return null;
-});
+//   return null;
+// });
 
-exports.sendNotificationEventFinish = functions.https.onRequest(async (req, res) => {
-  if (req.method !== "POST") {
-    return res.status(405).send("Method not allowed");
-  }
+// exports.sendNotificationEventFinish = functions.https.onRequest(async (req, res) => {
+//   if (req.method !== "POST") {
+//     return res.status(405).send("Method not allowed");
+//   }
 
-  const {eventPhoto, eventId, hostId} = req.body;
+//   const {eventPhoto, eventId, hostId} = req.body;
 
-  if (!eventPhoto || !eventId || !hostId) {
-    return res.status(400).send({
-      error: "bad-request",
-      message: "The eventPhoto, eventId and hostId of the notification are required",
-    });
-  }
+//   if (!eventPhoto || !eventId || !hostId) {
+//     return res.status(400).send({
+//       error: "bad-request",
+//       message: "The eventPhoto, eventId and hostId of the notification are required",
+//     });
+//   }
 
-  const message = {
-    notification: {
-      title: "Event Feedback",
-      body: "The event has ended. Share your thoughts by leaving a review for others!",
-      image: eventPhoto,
-    },
-    data: {
-      notification: "5",
-      information: JSON.stringify({
-        eventId: eventId,
-        eventHost: hostId,
-      }),
-      image: eventPhoto,
-      date: new Date().toISOString(),
-    },
-    android: {
-      notification: {
-        sound: "default",
-        priority: "high",
-        channelId: "high_importance_channel",
-      },
-    },
-    apns: {
-      payload: {
-        aps: {
-          sound: "default",
-        },
-      },
-    },
-    topic: `${eventId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
-  };
+//   const message = {
+//     notification: {
+//       title: "Event Feedback",
+//       body: "The event has ended. Share your thoughts by leaving a review for others!",
+//       image: eventPhoto,
+//     },
+//     data: {
+//       notification: "5",
+//       information: JSON.stringify({
+//         eventId: eventId,
+//         eventHost: hostId,
+//       }),
+//       image: eventPhoto,
+//       date: new Date().toISOString(),
+//     },
+//     android: {
+//       notification: {
+//         sound: "default",
+//         priority: "high",
+//         channelId: "high_importance_channel",
+//       },
+//     },
+//     apns: {
+//       payload: {
+//         aps: {
+//           sound: "default",
+//         },
+//       },
+//     },
+//     topic: `${eventId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+//   };
 
-  try {
-    await admin.messaging().send(message);
-    return res.status(200).send({message: "Notification sent successfully"});
-  } catch (error) {
-    console.error("Error sending sendNotificationEventFinish notification:", error);
-    return res.status(500).send({
-      error: "internal",
-      message: "Error sending sendNotificationEventFinish notification",
-      details: error.message,
-    });
-  }
-});
+//   try {
+//     await admin.messaging().send(message);
+//     return res.status(200).send({message: "Notification sent successfully"});
+//   } catch (error) {
+//     console.error("Error sending sendNotificationEventFinish notification:", error);
+//     return res.status(500).send({
+//       error: "internal",
+//       message: "Error sending sendNotificationEventFinish notification",
+//       details: error.message,
+//     });
+//   }
+// });
 
-exports.sendNotificationLastMinutes = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
-  const eventData = snap.data();
+// exports.sendNotificationLastMinutes = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
+//   const eventData = snap.data();
 
-  const startDate = eventData.startDate.toDate();
+//   const startDate = eventData.startDate.toDate();
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+//   const today = new Date();
+//   today.setHours(0, 0, 0, 0);
 
-  const eventStartDate = new Date(startDate);
-  eventStartDate.setHours(0, 0, 0, 0);
+//   const eventStartDate = new Date(startDate);
+//   eventStartDate.setHours(0, 0, 0, 0);
 
-  if (eventStartDate.getTime() !== today.getTime()) {
-    console.log("The event is not today. Notification will not be sent.");
-    return null;
-  }
+//   if (eventStartDate.getTime() !== today.getTime()) {
+//     console.log("The event is not today. Notification will not be sent.");
+//     return null;
+//   }
 
-  const message = {
-    notification: {
-      title: "Last-Minute Events",
-      body: "Last-minute events have just popped up. Interested in attending one?",
-      image: eventData.photo,
-    },
-    data: {
-      notification: "6",
-      information: JSON.stringify({
-        eventId: snap.id,
-        eventHost: eventData.hostRef.id,
-      }),
-      image: eventData.photo,
-      date: new Date().toISOString(),
-    },
-    android: {
-      notification: {
-        sound: "default",
-        priority: "high",
-        channelId: "high_importance_channel",
-      },
-    },
-    apns: {
-      payload: {
-        aps: {
-          sound: "default",
-        },
-      },
-    },
-    topic: `${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
-  };
+//   const message = {
+//     notification: {
+//       title: "Last-Minute Events",
+//       body: "Last-minute events have just popped up. Interested in attending one?",
+//       image: eventData.photo,
+//     },
+//     data: {
+//       notification: "6",
+//       information: JSON.stringify({
+//         eventId: snap.id,
+//         eventHost: eventData.hostRef.id,
+//       }),
+//       image: eventData.photo,
+//       date: new Date().toISOString(),
+//     },
+//     android: {
+//       notification: {
+//         sound: "default",
+//         priority: "high",
+//         channelId: "high_importance_channel",
+//       },
+//     },
+//     apns: {
+//       payload: {
+//         aps: {
+//           sound: "default",
+//         },
+//       },
+//     },
+//     topic: `${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+//   };
 
-  try {
-    await admin.messaging().send(message);
-    console.log(`Notification successfully sent to the topic: ${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
-  } catch (error) {
-    console.error("Error sending notification sendNotificationLastMinutes:", error);
-  }
-});
+//   try {
+//     await admin.messaging().send(message);
+//     console.log(`Notification successfully sent to the topic: ${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
+//   } catch (error) {
+//     console.error("Error sending notification sendNotificationLastMinutes:", error);
+//   }
+// });
 
-exports.sendNotificationEventsReminderFavorite = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
+// exports.sendNotificationEventsReminderFavorite = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
+//   const today = new Date();
+//   today.setUTCHours(0, 0, 0, 0);
 
-  const endDate = new Date(today);
-  endDate.setUTCDate(today.getUTCDate() + 7);
-  endDate.setUTCHours(23, 59, 59, 999);
+//   const endDate = new Date(today);
+//   endDate.setUTCDate(today.getUTCDate() + 7);
+//   endDate.setUTCHours(23, 59, 59, 999);
 
-  console.log(`Searching for events from today (${today.toISOString().slice(0, 10)}) to ${endDate.toISOString().slice(0, 10)}`);
+//   console.log(`Searching for events from today (${today.toISOString().slice(0, 10)}) to ${endDate.toISOString().slice(0, 10)}`);
 
-  try {
-    const snapshot = await admin.firestore().collection("event")
-        .where("startDate", ">=", today)
-        .where("startDate", "<=", endDate)
-        .get();
+//   try {
+//     const snapshot = await admin.firestore().collection("event")
+//         .where("startDate", ">=", today)
+//         .where("startDate", "<=", endDate)
+//         .get();
 
-    if (snapshot.empty) {
-      console.log("No events found in the next 7 days favorite");
-      return null;
-    }
+//     if (snapshot.empty) {
+//       console.log("No events found in the next 7 days favorite");
+//       return null;
+//     }
 
-    snapshot.forEach(async (doc) => {
-      const eventData = doc.data();
-      const eventId = doc.id;
+//     snapshot.forEach(async (doc) => {
+//       const eventData = doc.data();
+//       const eventId = doc.id;
 
-      const startDate = eventData.startDate.toDate();
-      const differenceInTime = startDate.getTime() - today.getTime();
-      const daysLeft = Math.ceil(differenceInTime / (1000 * 3600 * 24));
+//       const startDate = eventData.startDate.toDate();
+//       const differenceInTime = startDate.getTime() - today.getTime();
+//       const daysLeft = Math.ceil(differenceInTime / (1000 * 3600 * 24));
 
-      console.log(`Event found: ${eventId}`, eventData);
+//       console.log(`Event found: ${eventId}`, eventData);
 
-      const message = {
-        notification: {
-          title: "Favorite Event Reminder",
-          body: `The event '${eventData.name}' you favorited is happening in ${daysLeft} days. Are you going to join?`,
-          image: eventData.photo,
-        },
-        data: {
-          notification: "7",
-          information: JSON.stringify({
-            eventId: eventId,
-            eventHost: eventData.hostRef.id,
-          }),
-          image: eventData.photo,
-          date: new Date().toISOString(),
-        },
-        android: {
-          notification: {
-            sound: "default",
-            priority: "high",
-            channelId: "high_importance_channel",
-          },
-        },
-        apns: {
-          payload: {
-            aps: {
-              sound: "default",
-            },
-          },
-        },
-        topic: `favorite-${eventId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
-      };
+//       const message = {
+//         notification: {
+//           title: "Favorite Event Reminder",
+//           body: `The event '${eventData.name}' you favorited is happening in ${daysLeft} days. Are you going to join?`,
+//           image: eventData.photo,
+//         },
+//         data: {
+//           notification: "7",
+//           information: JSON.stringify({
+//             eventId: eventId,
+//             eventHost: eventData.hostRef.id,
+//           }),
+//           image: eventData.photo,
+//           date: new Date().toISOString(),
+//         },
+//         android: {
+//           notification: {
+//             sound: "default",
+//             priority: "high",
+//             channelId: "high_importance_channel",
+//           },
+//         },
+//         apns: {
+//           payload: {
+//             aps: {
+//               sound: "default",
+//             },
+//           },
+//         },
+//         topic: `favorite-${eventId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+//       };
 
-      try {
-        const response = await admin.messaging().send(message);
-        console.log(`Notification sent for the event ${eventId}: ${response}`);
-      } catch (error) {
-        console.error(`Error sending notification for event ${eventId}:`, error);
-      }
-    });
-  } catch (error) {
-    console.error("Error getting events:", error);
-  }
+//       try {
+//         const response = await admin.messaging().send(message);
+//         console.log(`Notification sent for the event ${eventId}: ${response}`);
+//       } catch (error) {
+//         console.error(`Error sending notification for event ${eventId}:`, error);
+//       }
+//     });
+//   } catch (error) {
+//     console.error("Error getting events:", error);
+//   }
 
-  return null;
-});
+//   return null;
+// });
 
-exports.sendNotificationNewMessage = functions.https.onRequest(async (req, res) => {
-  if (req.method !== "POST") {
-    return res.status(405).send("Method not allowed");
-  }
+// exports.sendNotificationNewMessage = functions.https.onRequest(async (req, res) => {
+//   if (req.method !== "POST") {
+//     return res.status(405).send("Method not allowed");
+//   }
 
-  const {userPhoto, userName, hostId, receiverId} = req.body;
+//   const {userPhoto, userName, hostId, receiverId} = req.body;
 
-  if (!userPhoto || !userName || !hostId) {
-    return res.status(400).send({
-      error: "bad-request",
-      message: "The userPhoto, userName and hostId of the notification are required",
-    });
-  }
+//   if (!userPhoto || !userName || !hostId) {
+//     return res.status(400).send({
+//       error: "bad-request",
+//       message: "The userPhoto, userName and hostId of the notification are required",
+//     });
+//   }
 
-  const message = {
-    notification: {
-      title: "New Message",
-      body: `${userName} just sent you a message. Check it out!`,
-      image: userPhoto,
-    },
-    data: {
-      notification: "8",
-      information: JSON.stringify({
-        eventHost: hostId,
-      }),
-      image: userPhoto,
-      date: new Date().toISOString(),
-    },
-    android: {
-      notification: {
-        sound: "default",
-        priority: "high",
-        channelId: "high_importance_channel",
-      },
-    },
-    apns: {
-      payload: {
-        aps: {
-          sound: "default",
-        },
-      },
-    },
-    topic: `chat-${receiverId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
-  };
+//   const message = {
+//     notification: {
+//       title: "New Message",
+//       body: `${userName} just sent you a message. Check it out!`,
+//       image: userPhoto,
+//     },
+//     data: {
+//       notification: "8",
+//       information: JSON.stringify({
+//         eventHost: hostId,
+//       }),
+//       image: userPhoto,
+//       date: new Date().toISOString(),
+//     },
+//     android: {
+//       notification: {
+//         sound: "default",
+//         priority: "high",
+//         channelId: "high_importance_channel",
+//       },
+//     },
+//     apns: {
+//       payload: {
+//         aps: {
+//           sound: "default",
+//         },
+//       },
+//     },
+//     topic: `chat-${receiverId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+//   };
 
-  try {
-    await admin.messaging().send(message);
-    return res.status(200).send({message: "Notification sent successfully"});
-  } catch (error) {
-    console.error("Error sending sendNotificationNewMessage notification:", error);
-    return res.status(500).send({
-      error: "internal",
-      message: "Error sending sendNotificationNewMessage notification",
-      details: error.message,
-    });
-  }
-});
+//   try {
+//     await admin.messaging().send(message);
+//     return res.status(200).send({message: "Notification sent successfully"});
+//   } catch (error) {
+//     console.error("Error sending sendNotificationNewMessage notification:", error);
+//     return res.status(500).send({
+//       error: "internal",
+//       message: "Error sending sendNotificationNewMessage notification",
+//       details: error.message,
+//     });
+//   }
+// });
 
-exports.sendNotificationRateApp = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
-  const message = {
-    notification: {
-      title: "Rate the App",
-      body: "We’d love your feedback! Take a moment to rate our app.",
-      image: "",
-    },
-    data: {
-      notification: "9",
-      information: JSON.stringify({
-        eventHost: "",
-      }),
-      image: "",
-      date: new Date().toISOString(),
-    },
-    android: {
-      notification: {
-        sound: "default",
-        priority: "high",
-        channelId: "high_importance_channel",
-      },
-    },
-    apns: {
-      payload: {
-        aps: {
-          sound: "default",
-        },
-      },
-    },
-    topic: "allUser",
-  };
+// exports.sendNotificationRateApp = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
+//   const message = {
+//     notification: {
+//       title: "Rate the App",
+//       body: "We’d love your feedback! Take a moment to rate our app.",
+//       image: "",
+//     },
+//     data: {
+//       notification: "9",
+//       information: JSON.stringify({
+//         eventHost: "",
+//       }),
+//       image: "",
+//       date: new Date().toISOString(),
+//     },
+//     android: {
+//       notification: {
+//         sound: "default",
+//         priority: "high",
+//         channelId: "high_importance_channel",
+//       },
+//     },
+//     apns: {
+//       payload: {
+//         aps: {
+//           sound: "default",
+//         },
+//       },
+//     },
+//     topic: "allUser",
+//   };
 
-  try {
-    const response = await admin.messaging().send(message);
-    console.log(`Notification sent for the event sendNotificationRateApp: ${response}`);
-  } catch (error) {
-    console.error(`Error sending notification for event sendNotificationRateApp:`, error);
-  }
-});
+//   try {
+//     const response = await admin.messaging().send(message);
+//     console.log(`Notification sent for the event sendNotificationRateApp: ${response}`);
+//   } catch (error) {
+//     console.error(`Error sending notification for event sendNotificationRateApp:`, error);
+//   }
+// });
 
-exports.sendNotificationCreateEvent = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
-  const eventInterestsSnapshot = await admin.firestore().collection("eventInterest")
-      .where("isSuggested", "==", false)
-      .get();
+// exports.sendNotificationCreateEvent = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
+//   const eventInterestsSnapshot = await admin.firestore().collection("eventInterest")
+//       .where("isSuggested", "==", false)
+//       .get();
 
-  const namesList = [];
-  eventInterestsSnapshot.forEach((doc) => {
-    namesList.push(doc.data().name);
-  });
+//   const namesList = [];
+//   eventInterestsSnapshot.forEach((doc) => {
+//     namesList.push(doc.data().name);
+//   });
 
-  const randomIndex = Math.floor(Math.random() * namesList.length);
-  const selectedName = namesList[randomIndex];
+//   const randomIndex = Math.floor(Math.random() * namesList.length);
+//   const selectedName = namesList[randomIndex];
 
-  const message = {
-    notification: {
-      title: "Create an Event",
-      body: `Thinking of creating an event for ${selectedName} interest? Get started now!`,
-      image: "",
-    },
-    data: {
-      notification: "10",
-      information: JSON.stringify({
-        eventHost: "",
-      }),
-      image: "",
-      date: new Date().toISOString(),
-    },
-    android: {
-      notification: {
-        sound: "default",
-        priority: "high",
-        channelId: "high_importance_channel",
-      },
-    },
-    apns: {
-      payload: {
-        aps: {
-          sound: "default",
-        },
-      },
-    },
-    topic: "allUser",
-  };
+//   const message = {
+//     notification: {
+//       title: "Create an Event",
+//       body: `Thinking of creating an event for ${selectedName} interest? Get started now!`,
+//       image: "",
+//     },
+//     data: {
+//       notification: "10",
+//       information: JSON.stringify({
+//         eventHost: "",
+//       }),
+//       image: "",
+//       date: new Date().toISOString(),
+//     },
+//     android: {
+//       notification: {
+//         sound: "default",
+//         priority: "high",
+//         channelId: "high_importance_channel",
+//       },
+//     },
+//     apns: {
+//       payload: {
+//         aps: {
+//           sound: "default",
+//         },
+//       },
+//     },
+//     topic: "allUser",
+//   };
 
-  try {
-    const response = await admin.messaging().send(message);
-    console.log(`Notification sent for the event sendNotificationCreateEvent: ${response}`);
-  } catch (error) {
-    console.error(`Error sending notification for event sendNotificationCreateEvent:`, error);
-  }
-});
+//   try {
+//     const response = await admin.messaging().send(message);
+//     console.log(`Notification sent for the event sendNotificationCreateEvent: ${response}`);
+//   } catch (error) {
+//     console.error(`Error sending notification for event sendNotificationCreateEvent:`, error);
+//   }
+// });
 
-exports.sendNotificationRecurringEvent = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
-  const message = {
-    notification: {
-      title: "Recurring Event Promotion",
-      body: "You marked your event as recurring! Would you like to promote it with paid advertising?",
-      image: "",
-    },
-    data: {
-      notification: "12",
-      information: JSON.stringify({
-        eventHost: "",
-      }),
-      image: "",
-      date: new Date().toISOString(),
-    },
-    android: {
-      notification: {
-        sound: "default",
-        priority: "high",
-        channelId: "high_importance_channel",
-      },
-    },
-    apns: {
-      payload: {
-        aps: {
-          sound: "default",
-        },
-      },
-    },
-    topic: "allUser",
-  };
+// exports.sendNotificationRecurringEvent = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
+//   const message = {
+//     notification: {
+//       title: "Recurring Event Promotion",
+//       body: "You marked your event as recurring! Would you like to promote it with paid advertising?",
+//       image: "",
+//     },
+//     data: {
+//       notification: "12",
+//       information: JSON.stringify({
+//         eventHost: "",
+//       }),
+//       image: "",
+//       date: new Date().toISOString(),
+//     },
+//     android: {
+//       notification: {
+//         sound: "default",
+//         priority: "high",
+//         channelId: "high_importance_channel",
+//       },
+//     },
+//     apns: {
+//       payload: {
+//         aps: {
+//           sound: "default",
+//         },
+//       },
+//     },
+//     topic: "allUser",
+//   };
 
-  try {
-    const response = await admin.messaging().send(message);
-    console.log(`Notification sent for the event sendNotificationRecurringEvent: ${response}`);
-  } catch (error) {
-    console.error(`Error sending notification for event sendNotificationRecurringEvent:`, error);
-  }
-});
+//   try {
+//     const response = await admin.messaging().send(message);
+//     console.log(`Notification sent for the event sendNotificationRecurringEvent: ${response}`);
+//   } catch (error) {
+//     console.error(`Error sending notification for event sendNotificationRecurringEvent:`, error);
+//   }
+// });
 
-exports.sendNotificationAdmin = functions.https.onRequest(async (req, res) => {
-  res.set("Access-Control-Allow-Origin", "*");
-  res.set("Access-Control-Allow-Methods", "POST");
-  res.set("Access-Control-Allow-Headers", "Content-Type");
+// exports.sendNotificationAdmin = functions.https.onRequest(async (req, res) => {
+//   res.set("Access-Control-Allow-Origin", "*");
+//   res.set("Access-Control-Allow-Methods", "POST");
+//   res.set("Access-Control-Allow-Headers", "Content-Type");
 
-  if (req.method === "OPTIONS") {
-    res.set("Access-Control-Allow-Methods", "POST");
-    res.set("Access-Control-Allow-Headers", "Content-Type");
-    res.set("Access-Control-Max-Age", "3600");
-    return res.status(204).send("");
-  }
+//   if (req.method === "OPTIONS") {
+//     res.set("Access-Control-Allow-Methods", "POST");
+//     res.set("Access-Control-Allow-Headers", "Content-Type");
+//     res.set("Access-Control-Max-Age", "3600");
+//     return res.status(204).send("");
+//   }
 
-  if (req.method !== "POST") {
-    return res.status(405).send("Method not allowed");
-  }
+//   if (req.method !== "POST") {
+//     return res.status(405).send("Method not allowed");
+//   }
 
-  const {titleMessage, bodyMessage, imageMessage, urlMessage} = req.body;
+//   const {titleMessage, bodyMessage, imageMessage, urlMessage} = req.body;
 
-  if (!titleMessage || !bodyMessage) {
-    return res.status(400).send({
-      error: "bad-request",
-      message: "The titleMessage and bodyMessage of the notification are required",
-    });
-  }
+//   if (!titleMessage || !bodyMessage) {
+//     return res.status(400).send({
+//       error: "bad-request",
+//       message: "The titleMessage and bodyMessage of the notification are required",
+//     });
+//   }
 
-  const message = {
-    notification: {
-      title: titleMessage,
-      body: bodyMessage,
-    },
-    data: {
-      notification: "14",
-      image: imageMessage == undefined && imageMessage == null ? "" : imageMessage,
-      url: urlMessage == undefined && urlMessage == null ? "" : urlMessage,
-      date: new Date().toISOString(),
-    },
-    android: {
-      notification: {
-        sound: "default",
-        priority: "high",
-        channelId: "high_importance_channel",
-      },
-    },
-    apns: {
-      payload: {
-        aps: {
-          sound: "default",
-        },
-      },
-    },
-    topic: "allUser",
-  };
+//   const message = {
+//     notification: {
+//       title: titleMessage,
+//       body: bodyMessage,
+//     },
+//     data: {
+//       notification: "14",
+//       image: imageMessage == undefined && imageMessage == null ? "" : imageMessage,
+//       url: urlMessage == undefined && urlMessage == null ? "" : urlMessage,
+//       date: new Date().toISOString(),
+//     },
+//     android: {
+//       notification: {
+//         sound: "default",
+//         priority: "high",
+//         channelId: "high_importance_channel",
+//       },
+//     },
+//     apns: {
+//       payload: {
+//         aps: {
+//           sound: "default",
+//         },
+//       },
+//     },
+//     topic: "allUser",
+//   };
 
-  try {
-    await admin.messaging().send(message);
-    return res.status(200).send({message: "Notification sent successfully"});
-  } catch (error) {
-    console.error("Error sending sendNotificationAdmin notification:", error);
-    return res.status(500).send({
-      error: "internal",
-      message: "Error sending sendNotificationAdmin notification",
-      details: error.message,
-    });
-  }
-});
+//   try {
+//     await admin.messaging().send(message);
+//     return res.status(200).send({message: "Notification sent successfully"});
+//   } catch (error) {
+//     console.error("Error sending sendNotificationAdmin notification:", error);
+//     return res.status(500).send({
+//       error: "internal",
+//       message: "Error sending sendNotificationAdmin notification",
+//       details: error.message,
+//     });
+//   }
+// });
 
-exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res) => {
-  if (req.method !== "POST") {
-    return res.status(405).send("Method not allowed");
-  }
+// exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res) => {
+//   if (req.method !== "POST") {
+//     return res.status(405).send("Method not allowed");
+//   }
 
-  const {userId, eventPhoto, eventId} = req.body;
+//   const {userId, eventPhoto, eventId} = req.body;
 
-  if (!userId || !eventPhoto || !eventId) {
-    return res.status(400).send({
-      error: "bad-request",
-      message: "The userId, eventId and eventPhoto of the notification are required",
-    });
-  }
+//   if (!userId || !eventPhoto || !eventId) {
+//     return res.status(400).send({
+//       error: "bad-request",
+//       message: "The userId, eventId and eventPhoto of the notification are required",
+//     });
+//   }
 
-  const message = {
-    notification: {
-      title: "User Event Question!",
-      body: "Someone has a question about your event. Head over to check it out!",
-      image: eventPhoto,
-    },
-    data: {
-      notification: "13",
-      information: JSON.stringify({
-        eventId: eventId,
-      }),
-      image: eventPhoto,
-      date: new Date().toISOString(),
-    },
-    android: {
-      notification: {
-        sound: "default",
-        priority: "high",
-        channelId: "high_importance_channel",
-      },
-    },
-    apns: {
-      payload: {
-        aps: {
-          sound: "default",
-        },
-      },
-    },
-    topic: `${userId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
-  };
+//   const message = {
+//     notification: {
+//       title: "User Event Question!",
+//       body: "Someone has a question about your event. Head over to check it out!",
+//       image: eventPhoto,
+//     },
+//     data: {
+//       notification: "13",
+//       information: JSON.stringify({
+//         eventId: eventId,
+//       }),
+//       image: eventPhoto,
+//       date: new Date().toISOString(),
+//     },
+//     android: {
+//       notification: {
+//         sound: "default",
+//         priority: "high",
+//         channelId: "high_importance_channel",
+//       },
+//     },
+//     apns: {
+//       payload: {
+//         aps: {
+//           sound: "default",
+//         },
+//       },
+//     },
+//     topic: `${userId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+//   };
 
-  try {
-    await admin.messaging().send(message);
-    return res.status(200).send({message: "Notification sent successfully"});
-  } catch (error) {
-    console.error("Error sending sendNotificationQuestionUser notification:", error);
-    return res.status(500).send({
-      error: "internal",
-      message: "Error sending sendNotificationQuestionUser notification",
-      details: error.message,
-    });
-  }
-});
+//   try {
+//     await admin.messaging().send(message);
+//     return res.status(200).send({message: "Notification sent successfully"});
+//   } catch (error) {
+//     console.error("Error sending sendNotificationQuestionUser notification:", error);
+//     return res.status(500).send({
+//       error: "internal",
+//       message: "Error sending sendNotificationQuestionUser notification",
+//       details: error.message,
+//     });
+//   }
+// });
 
 exports.createCustomAccount = functions.https.onCall(async (data, context) => {
   try {
