@@ -15,8 +15,9 @@ exports.checkEmail = functions.https.onRequest(async (req, res) => {
   const email = req.body.email;
 
   try {
-    await admin.auth().getUserByEmail(email);
-    return res.status(200).send({exists: true});
+    const userRecord = await admin.auth().getUserByEmail(email);
+
+    return res.status(200).send({exists: true, methods: userRecord.providerData.map((provider) => provider.providerId)});
   } catch (error) {
     if (error.code === "auth/user-not-found") {
       return res.status(200).send({exists: false});
