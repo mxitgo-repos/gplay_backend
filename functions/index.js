@@ -1567,9 +1567,13 @@ exports.createPaymentIntent = functions.https.onCall(async (data, context) => {
     const paymentIntent = await stripe.paymentIntents.create({
       amount: data.amount,
       currency: data.currency,
+      automatic_payment_methods: {
+        enabled: true,
+        allow_redirects: "never",
+      },
     });
 
-    return {success: true, clientSecret: paymentIntent.client_secret};
+    return {success: true, clientSecret: paymentIntent.client_secret, id: paymentIntent.id};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
   }
@@ -1654,5 +1658,25 @@ exports.sendNotificationAdminStrikes = functions.https.onRequest(async (req, res
       message: "Error sending sendNotificationAdmin notification",
       details: error.message,
     });
+  }
+});
+
+exports.confirmPaymentIntent = functions.https.onRequest(async (req, res) => {
+  try {
+    const {paymentIntentId, token} = req.body;
+
+    const paymentIntent = await stripe.paymentIntents.confirm(paymentIntentId, {
+      payment_method_data: {
+        type: "card",
+        card: {
+          token: token,
+        },
+      },
+    });
+
+    res.status(200).send({success: true, paymentIntent});
+  } catch (error) {
+    console.error("Error confirming payment intent:", error);
+    res.status(500).send({error: error.message});
   }
 });
