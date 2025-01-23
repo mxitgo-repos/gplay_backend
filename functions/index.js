@@ -1430,10 +1430,10 @@ exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
       };
     }
 
-    await stripe.accounts.update(data.accountId, accountData);
-    return {success: true};
+    const updatedAccount = await stripe.accounts.update(data.accountId, accountData);
+    return {success: true, account: updatedAccount};
   } catch (error) {
-    throw new functions.https.HttpsError("internal", error.message);
+    return {success: false, message: error.message};
   }
 });
 
