@@ -1,7 +1,8 @@
 /* eslint-disable no-undef */
 /* eslint-disable max-len */
-const functions = require("firebase-functions");
 const admin = require("firebase-admin");
+const functions = require("firebase-functions");
+
 const stripe = require("stripe")(functions.config().stripe.secret);
 admin.initializeApp();
 
@@ -1679,5 +1680,21 @@ exports.confirmPaymentIntent = functions.https.onRequest(async (req, res) => {
   } catch (error) {
     console.error("Error confirming payment intent:", error);
     res.status(500).send({error: error.message});
+  }
+});
+
+exports.appleCallbackHandler = functions.https.onRequest(async (req, res) => {
+  try {
+    console.log("Request body:", req.body);
+
+    const redirect = `intent://callback?${new URLSearchParams(
+        req.body,
+    ).toString()}#Intent;package=com.gplay.app;scheme=signinwithapple;end`;
+
+    console.log("Redirecting to:", redirect);
+    res.redirect(307, redirect);
+  } catch (error) {
+    console.error("Error in Apple callback:", error);
+    res.redirect(307, `intent://callback?error=auth_failed#Intent;package=com.gplay.app;scheme=signinwithapple;end`);
   }
 });
