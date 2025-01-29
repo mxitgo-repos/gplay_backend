@@ -117,57 +117,49 @@ exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
   }
 });
 
-// exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
-//   if (req.method !== "POST") {
-//     return res.status(405).send("Method not allowed");
-//   }
+exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
 
-//   const {userId, title, content, image, eventId, eventHost, navigation, notificationType, url} = req.body;
+  const {userId, title, content, notificationType} = req.body;
 
-//   if (!userId || !title || !content || !notificationType) {
-//     return res.status(400).send({
-//       error: "bad-request",
-//       message: "The userId, title, content and notificationType of the pust notification user are required",
-//     });
-//   }
+  if (!userId || !title || !content || !notificationType) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The userId, title, content and notificationType of the pust notification user are required",
+    });
+  }
 
-//   const notificationData = {
-//     title,
-//     content,
-//     notificationType,
-//     isRead: false,
-//     date: Timestamp.now(),
-//   };
+  const notificationData = {
+    title,
+    content,
+    notificationType,
+    isRead: false,
+    date: Timestamp.now(),
+    eventId: "",
+    eventHost: "",
+    image: "",
+    navigation: "",
+  };
 
-//   if (notificationType === "14") {
-//     notificationData.url = url;
-//     notificationData.image = image == undefined && image == null ? "" : image;
-//     notificationData.navigation = navigation == undefined && navigation == null ? "" : navigation;
-//   } else {
-//     notificationData.eventId = eventId;
-//     notificationData.eventHost = eventHost;
-//     notificationData.image = image == undefined && image == null ? "" : image;
-//     notificationData.navigation = navigation == undefined && navigation == null ? "" : navigation;
-//   }
+  try {
+    await admin.firestore().collection("user").doc(userId).update({
+      notifications: FieldValue.arrayUnion(notificationData),
+    });
 
-
-//   try {
-//     await admin.firestore().collection("user").doc(userId).update({
-//       notifications: FieldValue.arrayUnion(notificationData),
-//     });
-
-//     return res.status(200).send({
-//       message: "Notification added successfully",
-//     });
-//   } catch (error) {
-//     console.error("Error adding notification:", error);
-//     return res.status(500).send({
-//       error: "internal",
-//       message: "Error adding notification",
-//       details: error.message,
-//     });
-//   }
-// });
+    return res.status(200).send({
+      message: "Notification added successfully",
+    });
+  } catch (error) {
+    console.error("Error adding notification:", error);
+    return res.status(500).send({
+      error: "internal",
+      message: "Error adding notification",
+      details: error.message,
+    });
+  }
+});
 
 exports.sendNotificationByInterest = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
   const eventData = snap.data();
@@ -1369,16 +1361,25 @@ exports.sendNotificationAdmin = functions.https.onRequest(async (req, res) => {
 
 exports.createCustomAccount = functions.https.onCall(async (data, context) => {
   try {
-    const account = await stripe.accounts.create({
+    const accountData = {
       type: "custom",
       country: data.country,
-      email: data.email,
       business_type: "individual",
       capabilities: {
         transfers: {requested: true},
         card_payments: {requested: true},
       },
-    });
+    };
+
+    if (data.email) {
+      accountData.email = data.email;
+    } else if (data.phone) {
+      accountData.individual = {
+        phone: data.phone,
+      };
+    }
+
+    const account = await stripe.accounts.create(accountData);
     return {accountId: account.id};
   } catch (error) {
     throw new functions.https.HttpsError("internal", error.message);
@@ -1610,7 +1611,7 @@ exports.sendNotificationAdminStrikes = functions.https.onRequest(async (req, res
       body: bodyMessage,
     },
     data: {
-      notification: "14",
+      notification: "15",
       image: imageMessage == undefined && imageMessage == null ? "" : imageMessage,
       url: urlMessage == undefined && urlMessage == null ? "" : urlMessage,
       date: new Date().toISOString(),
