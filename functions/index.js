@@ -165,87 +165,89 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
 exports.sendNotificationByInterest = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
   const eventData = snap.data();
 
-  const message = {
-    notification: {
-      title: "Event Just for You!",
-      body: "We found an event that matches your interests. Don’t miss out—check it out now and see if it’s the perfect fit!",
-      image: eventData.photo,
-    },
-    data: {
-      notification: "1",
-      information: JSON.stringify({
-        eventId: snap.id,
-        eventHost: eventData.hostRef.id,
-      }),
-      image: eventData.photo,
-      date: new Date().toISOString(),
-    },
-    android: {
+  if (!eventData.isPrivate) {
+    const message = {
       notification: {
-        sound: "default",
-        priority: "high",
-        channelId: "high_importance_channel",
+        title: "Event Just for You!",
+        body: "We found an event that matches your interests. Don’t miss out—check it out now and see if it’s the perfect fit!",
+        image: eventData.photo,
       },
-    },
-    apns: {
-      payload: {
-        aps: {
+      data: {
+        notification: "1",
+        information: JSON.stringify({
+          eventId: snap.id,
+          eventHost: eventData.hostRef.id,
+        }),
+        image: eventData.photo,
+        date: new Date().toISOString(),
+      },
+      android: {
+        notification: {
           sound: "default",
+          priority: "high",
+          channelId: "high_importance_channel",
         },
       },
-    },
-    topic: `${eventData.interestList.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}-${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
-  };
+      apns: {
+        payload: {
+          aps: {
+            sound: "default",
+          },
+        },
+      },
+      topic: `${eventData.interestList.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}-${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+    };
 
-  try {
-    await admin.messaging().send(message);
-    console.log(`Notification successfully sent to the topic: ${eventData.interestList.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}-${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
+    try {
+      await admin.messaging().send(message);
+      console.log(`Notification successfully sent to the topic: ${eventData.interestList.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}-${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
 
-    const usersRef = admin.firestore().collection("user")
-        .where("eventInterest", "array-contains", eventData.interestList)
-        .where("state", "==", eventData.state);
+      const usersRef = admin.firestore().collection("user")
+          .where("eventInterest", "array-contains", eventData.interestList)
+          .where("state", "==", eventData.state);
 
-    const batchSize = 500;
-    let lastDoc = null;
-    let hasMoreDocuments = true;
+      const batchSize = 500;
+      let lastDoc = null;
+      let hasMoreDocuments = true;
 
-    while (hasMoreDocuments) {
-      let query = usersRef.limit(batchSize);
-      if (lastDoc) {
-        query = query.startAfter(lastDoc);
-      }
+      while (hasMoreDocuments) {
+        let query = usersRef.limit(batchSize);
+        if (lastDoc) {
+          query = query.startAfter(lastDoc);
+        }
 
-      const usersSnapshot = await query.get();
-      if (usersSnapshot.empty) {
-        hasMoreDocuments = false;
-        break;
-      }
+        const usersSnapshot = await query.get();
+        if (usersSnapshot.empty) {
+          hasMoreDocuments = false;
+          break;
+        }
 
-      const batch = admin.firestore().batch();
-      usersSnapshot.forEach((doc) => {
-        const userRef = doc.ref;
-        batch.update(userRef, {
-          notifications: admin.firestore.FieldValue.arrayUnion({
-            title: "Event Just for You!",
-            content: "We found an event that matches your interests. Don’t miss out—check it out now and see if it’s the perfect fit!",
-            notificationType: "1",
-            isRead: false,
-            date: Timestamp.now(),
-            image: eventData.photo,
-            eventId: snap.id,
-            eventHost: eventData.hostRef.id,
-            navigation: "eventdetail",
-          }),
+        const batch = admin.firestore().batch();
+        usersSnapshot.forEach((doc) => {
+          const userRef = doc.ref;
+          batch.update(userRef, {
+            notifications: admin.firestore.FieldValue.arrayUnion({
+              title: "Event Just for You!",
+              content: "We found an event that matches your interests. Don’t miss out—check it out now and see if it’s the perfect fit!",
+              notificationType: "1",
+              isRead: false,
+              date: Timestamp.now(),
+              image: eventData.photo,
+              eventId: snap.id,
+              eventHost: eventData.hostRef.id,
+              navigation: "eventdetail",
+            }),
+          });
         });
-      });
 
-      await batch.commit();
-      lastDoc = usersSnapshot.docs[usersSnapshot.docs.length - 1];
+        await batch.commit();
+        lastDoc = usersSnapshot.docs[usersSnapshot.docs.length - 1];
+      }
+
+      console.log("Notifications successfully added to user documents.");
+    } catch (error) {
+      console.error("Error sending notification sendNotificationByInterest:", error);
     }
-
-    console.log("Notifications successfully added to user documents.");
-  } catch (error) {
-    console.error("Error sending notification sendNotificationByInterest:", error);
   }
 });
 
@@ -327,86 +329,88 @@ exports.sendNotificationInviteUser = functions.https.onRequest(async (req, res) 
 exports.sendNotificationByState = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
   const eventData = snap.data();
 
-  const message = {
-    notification: {
-      title: "New Events Nearby!",
-      body: "New events just popped up near you! Dive in and see what's happening around town!",
-      image: eventData.photo,
-    },
-    data: {
-      notification: "3",
-      information: JSON.stringify({
-        eventId: snap.id,
-        eventHost: eventData.hostRef.id,
-      }),
-      image: eventData.photo,
-      date: new Date().toISOString(),
-    },
-    android: {
+  if (!eventData.isPrivate) {
+    const message = {
       notification: {
-        sound: "default",
-        priority: "high",
-        channelId: "high_importance_channel",
+        title: "New Events Nearby!",
+        body: "New events just popped up near you! Dive in and see what's happening around town!",
+        image: eventData.photo,
       },
-    },
-    apns: {
-      payload: {
-        aps: {
+      data: {
+        notification: "3",
+        information: JSON.stringify({
+          eventId: snap.id,
+          eventHost: eventData.hostRef.id,
+        }),
+        image: eventData.photo,
+        date: new Date().toISOString(),
+      },
+      android: {
+        notification: {
           sound: "default",
+          priority: "high",
+          channelId: "high_importance_channel",
         },
       },
-    },
-    topic: `${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
-  };
+      apns: {
+        payload: {
+          aps: {
+            sound: "default",
+          },
+        },
+      },
+      topic: `${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+    };
 
-  try {
-    await admin.messaging().send(message);
-    console.log(`Notification successfully sent to the topic: ${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
+    try {
+      await admin.messaging().send(message);
+      console.log(`Notification successfully sent to the topic: ${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
 
-    const usersRef = admin.firestore().collection("user")
-        .where("state", "==", eventData.state);
+      const usersRef = admin.firestore().collection("user")
+          .where("state", "==", eventData.state);
 
-    const batchSize = 500;
-    let lastDoc = null;
-    let hasMoreDocuments = true;
+      const batchSize = 500;
+      let lastDoc = null;
+      let hasMoreDocuments = true;
 
-    while (hasMoreDocuments) {
-      let query = usersRef.limit(batchSize);
-      if (lastDoc) {
-        query = query.startAfter(lastDoc);
-      }
+      while (hasMoreDocuments) {
+        let query = usersRef.limit(batchSize);
+        if (lastDoc) {
+          query = query.startAfter(lastDoc);
+        }
 
-      const usersSnapshot = await query.get();
-      if (usersSnapshot.empty) {
-        hasMoreDocuments = false;
-        break;
-      }
+        const usersSnapshot = await query.get();
+        if (usersSnapshot.empty) {
+          hasMoreDocuments = false;
+          break;
+        }
 
-      const batch = admin.firestore().batch();
-      usersSnapshot.forEach((doc) => {
-        const userRef = doc.ref;
-        batch.update(userRef, {
-          notifications: admin.firestore.FieldValue.arrayUnion({
-            title: "New Events Nearby!",
-            content: "New events just popped up near you! Dive in and see what's happening around town!",
-            notificationType: "3",
-            isRead: false,
-            date: Timestamp.now(),
-            image: eventData.photo,
-            eventId: snap.id,
-            eventHost: eventData.hostRef.id,
-            navigation: "eventdetail",
-          }),
+        const batch = admin.firestore().batch();
+        usersSnapshot.forEach((doc) => {
+          const userRef = doc.ref;
+          batch.update(userRef, {
+            notifications: admin.firestore.FieldValue.arrayUnion({
+              title: "New Events Nearby!",
+              content: "New events just popped up near you! Dive in and see what's happening around town!",
+              notificationType: "3",
+              isRead: false,
+              date: Timestamp.now(),
+              image: eventData.photo,
+              eventId: snap.id,
+              eventHost: eventData.hostRef.id,
+              navigation: "eventdetail",
+            }),
+          });
         });
-      });
 
-      await batch.commit();
-      lastDoc = usersSnapshot.docs[usersSnapshot.docs.length - 1];
+        await batch.commit();
+        lastDoc = usersSnapshot.docs[usersSnapshot.docs.length - 1];
+      }
+
+      console.log("Notifications successfully added to user documents.");
+    } catch (error) {
+      console.error("Error sending notification sendNotificationByState:", error);
     }
-
-    console.log("Notifications successfully added to user documents.");
-  } catch (error) {
-    console.error("Error sending notification sendNotificationByState:", error);
   }
 });
 
@@ -632,99 +636,101 @@ exports.sendNotificationEventFinish = functions.https.onRequest(async (req, res)
 exports.sendNotificationLastMinutes = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
   const eventData = snap.data();
 
-  const startDate = eventData.startDate.toDate();
+  if (!eventData.isPrivate) {
+    const startDate = eventData.startDate.toDate();
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-  const eventStartDate = new Date(startDate);
-  eventStartDate.setHours(0, 0, 0, 0);
+    const eventStartDate = new Date(startDate);
+    eventStartDate.setHours(0, 0, 0, 0);
 
-  if (eventStartDate.getTime() !== today.getTime()) {
-    console.log("The event is not today. Notification will not be sent.");
-    return null;
-  }
-
-  const message = {
-    notification: {
-      title: "Last-Minute Events",
-      body: "Last-minute events have just popped up. Interested in attending one?",
-      image: eventData.photo,
-    },
-    data: {
-      notification: "6",
-      information: JSON.stringify({
-        eventId: snap.id,
-        eventHost: eventData.hostRef.id,
-      }),
-      image: eventData.photo,
-      date: new Date().toISOString(),
-    },
-    android: {
-      notification: {
-        sound: "default",
-        priority: "high",
-        channelId: "high_importance_channel",
-      },
-    },
-    apns: {
-      payload: {
-        aps: {
-          sound: "default",
-        },
-      },
-    },
-    topic: `${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
-  };
-
-  try {
-    await admin.messaging().send(message);
-    console.log(`Notification successfully sent to the topic: ${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
-
-    const usersRef = admin.firestore().collection("user")
-        .where("state", "==", eventData.state);
-
-    const batchSize = 500;
-    let lastDoc = null;
-    let hasMoreDocuments = true;
-
-    while (hasMoreDocuments) {
-      let query = usersRef.limit(batchSize);
-      if (lastDoc) {
-        query = query.startAfter(lastDoc);
-      }
-
-      const usersSnapshot = await query.get();
-      if (usersSnapshot.empty) {
-        hasMoreDocuments = false;
-        break;
-      }
-
-      const batch = admin.firestore().batch();
-      usersSnapshot.forEach((doc) => {
-        const userRef = doc.ref;
-        batch.update(userRef, {
-          notifications: admin.firestore.FieldValue.arrayUnion({
-            title: "Last-Minute Events",
-            content: "Last-minute events have just popped up. Interested in attending one?",
-            notificationType: "6",
-            isRead: false,
-            date: Timestamp.now(),
-            image: eventData.photo,
-            eventId: snap.id,
-            eventHost: eventData.hostRef.id,
-            navigation: "eventdetail",
-          }),
-        });
-      });
-
-      await batch.commit();
-      lastDoc = usersSnapshot.docs[usersSnapshot.docs.length - 1];
+    if (eventStartDate.getTime() !== today.getTime()) {
+      console.log("The event is not today. Notification will not be sent.");
+      return null;
     }
 
-    console.log("Notifications successfully added to user documents.");
-  } catch (error) {
-    console.error("Error sending notification sendNotificationLastMinutes:", error);
+    const message = {
+      notification: {
+        title: "Last-Minute Events",
+        body: "Last-minute events have just popped up. Interested in attending one?",
+        image: eventData.photo,
+      },
+      data: {
+        notification: "6",
+        information: JSON.stringify({
+          eventId: snap.id,
+          eventHost: eventData.hostRef.id,
+        }),
+        image: eventData.photo,
+        date: new Date().toISOString(),
+      },
+      android: {
+        notification: {
+          sound: "default",
+          priority: "high",
+          channelId: "high_importance_channel",
+        },
+      },
+      apns: {
+        payload: {
+          aps: {
+            sound: "default",
+          },
+        },
+      },
+      topic: `${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+    };
+
+    try {
+      await admin.messaging().send(message);
+      console.log(`Notification successfully sent to the topic: ${eventData.state.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
+
+      const usersRef = admin.firestore().collection("user")
+          .where("state", "==", eventData.state);
+
+      const batchSize = 500;
+      let lastDoc = null;
+      let hasMoreDocuments = true;
+
+      while (hasMoreDocuments) {
+        let query = usersRef.limit(batchSize);
+        if (lastDoc) {
+          query = query.startAfter(lastDoc);
+        }
+
+        const usersSnapshot = await query.get();
+        if (usersSnapshot.empty) {
+          hasMoreDocuments = false;
+          break;
+        }
+
+        const batch = admin.firestore().batch();
+        usersSnapshot.forEach((doc) => {
+          const userRef = doc.ref;
+          batch.update(userRef, {
+            notifications: admin.firestore.FieldValue.arrayUnion({
+              title: "Last-Minute Events",
+              content: "Last-minute events have just popped up. Interested in attending one?",
+              notificationType: "6",
+              isRead: false,
+              date: Timestamp.now(),
+              image: eventData.photo,
+              eventId: snap.id,
+              eventHost: eventData.hostRef.id,
+              navigation: "eventdetail",
+            }),
+          });
+        });
+
+        await batch.commit();
+        lastDoc = usersSnapshot.docs[usersSnapshot.docs.length - 1];
+      }
+
+      console.log("Notifications successfully added to user documents.");
+    } catch (error) {
+      console.error("Error sending notification sendNotificationLastMinutes:", error);
+    }
   }
 });
 
