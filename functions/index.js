@@ -1698,3 +1698,97 @@ exports.appleCallbackHandler = functions.https.onRequest(async (req, res) => {
     res.redirect(307, `intent://callback?error=auth_failed#Intent;package=com.gplay.app;scheme=signinwithapple;end`);
   }
 });
+
+exports.eventClose = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+  const {eventId, newStartDate, newEndDate} = body;
+
+  if (!eventId || !newStartDate || !newEndDate) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The eventId, newStartDate and newEndDate are required",
+    });
+  }
+
+  try {
+    const startDateUTC = new Date(newStartDate);
+    const endDateUTC = new Date(newEndDate);
+
+    const offsetHours = 6; // GMT-6
+    const startDate = new Date(startDateUTC.getTime() + (offsetHours * 60 * 60 * 1000));
+    const endDate = new Date(endDateUTC.getTime() + (offsetHours * 60 * 60 * 1000));
+
+    const startTimestamp = Timestamp.fromDate(startDate);
+    const endTimestamp = Timestamp.fromDate(endDate);
+
+    console.log("Zona horaria configurada: GMT-6");
+    console.log("Fecha original recibida:", newStartDate);
+    console.log("Fecha ajustada con offset:", startDate.toISOString());
+    console.log("Fecha final en Timestamp:", startTimestamp.toDate().toISOString());
+
+    await admin.firestore().collection("event").doc(eventId).update({
+      isEnd: true,
+      startDate: startTimestamp,
+      endDate: endTimestamp,
+    });
+
+    return res.status(200).send({message: "Event closed successfully"});
+  } catch (error) {
+    return res.status(500).send({error: "internal", message: "Error closing event", details: error.message});
+  }
+});
+
+exports.eventFinish = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+  const {eventId, participants} = body;
+
+  if (!eventId || !participants) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The eventId and participants are required",
+    });
+  }
+
+  try {
+    await admin.firestore().collection("event").doc(eventId).update({
+      isEnd: true,
+      isClose: true,
+    });
+
+    const participantRefs = participants.map((path) => {
+      const docRef = admin.firestore().doc(path);
+      return {
+        ref: docRef,
+        id: docRef.id,
+      };
+    });
+
+    const updatePromises = participantRefs.map(async ({ref, id}) => {
+      const otherParticipantRefs = participantRefs
+          .filter((p) => p.id !== id)
+          .map((p) => p.ref);
+
+      if (otherParticipantRefs.length > 0) {
+        return admin.firestore().collection("user").doc(id).update({
+          knownPeopleRef: FieldValue.arrayUnion(...otherParticipantRefs),
+        });
+      }
+
+      return Promise.resolve();
+    });
+
+    await Promise.all(updatePromises);
+
+    return res.status(200).send({message: "Event finished successfully"});
+  } catch (error) {
+    return res.status(500).send({error: "internal", message: "Error finishing event", details: error.message});
+  }
+});
