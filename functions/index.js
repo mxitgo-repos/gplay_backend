@@ -1798,3 +1798,38 @@ exports.eventFinish = functions.https.onRequest(async (req, res) => {
     return res.status(500).send({error: "internal", message: "Error finishing event", details: error.message});
   }
 });
+
+exports.validatePhoneNumber = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+  const {phoneNumber} = body;
+
+  if (!phoneNumber) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The phoneNumber is required",
+    });
+  }
+
+  try {
+    const querySnapshot = await admin.firestore()
+        .collection("user")
+        .where("kyc", "==", true)
+        .where("phoneNumber", "==", phoneNumber)
+        .limit(1)
+        .get();
+
+    const exists = !querySnapshot.empty;
+
+    return res.status(200).send({exists});
+  } catch (error) {
+    return res.status(500).send({
+      error: "internal",
+      message: "Error validating phone number",
+      details: error.message,
+    });
+  }
+});
