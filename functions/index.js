@@ -929,6 +929,81 @@ exports.sendNotificationNewMessage = functions.https.onRequest(async (req, res) 
   }
 });
 
+exports.sendNotificationNewRequest = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const {userPhoto, userName, hostId, receiverId} = req.body;
+
+  if (!userPhoto || !userName || !hostId) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The userPhoto, userName and hostId of the notification are required",
+    });
+  }
+
+  const message = {
+    notification: {
+      title: "New Friend Alert!",
+      body: `${userName} wants to be your buddy! Ready to connect? Accept their friend request and start the fun!`,
+      image: userPhoto,
+    },
+    data: {
+      notification: "16",
+      information: JSON.stringify({
+        eventHost: hostId,
+      }),
+      image: userPhoto,
+      date: new Date().toISOString(),
+    },
+    android: {
+      notification: {
+        sound: "default",
+        priority: "high",
+        channelId: "high_importance_channel",
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+    topic: `chat-${receiverId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+  };
+
+  try {
+    await admin.messaging().send(message);
+    console.log(`Notification successfully sent to the topic: ${receiverId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
+
+    await admin.firestore().collection("user").doc(receiverId).update({
+      notifications: FieldValue.arrayUnion({
+        title: "New Friend Alert!",
+        content: `${userName} wants to be your buddy! Ready to connect? Accept their friend request and start the fun!`,
+        notificationType: "16",
+        isRead: false,
+        date: Timestamp.now(),
+        image: userPhoto,
+        eventId: "",
+        eventHost: hostId,
+        navigation: "chats",
+      }),
+    });
+
+    console.log("Notifications successfully added to user documents.");
+    return res.status(200).send({message: "Notification sent successfully"});
+  } catch (error) {
+    console.error("Error sending sendNotificationNewRequest notification:", error);
+    return res.status(500).send({
+      error: "internal",
+      message: "Error sending sendNotificationNewRequest notification",
+      details: error.message,
+    });
+  }
+});
+
 exports.sendNotificationRateApp = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
   const message = {
     notification: {
