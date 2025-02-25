@@ -1178,86 +1178,86 @@ exports.sendNotificationCreateEvent = functions.pubsub.schedule("0 12 * * 1").on
   }
 });
 
-exports.sendNotificationRecurringEvent = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
-  const message = {
-    notification: {
-      title: "Recurring Event Promotion",
-      body: "You marked your event as recurring! Would you like to promote it with paid advertising?",
-      image: "",
-    },
-    data: {
-      notification: "12",
-      information: JSON.stringify({
-        eventHost: "",
-      }),
-      image: "",
-      date: new Date().toISOString(),
-    },
-    android: {
-      notification: {
-        sound: "default",
-        priority: "high",
-        channelId: "high_importance_channel",
-      },
-    },
-    apns: {
-      payload: {
-        aps: {
-          sound: "default",
-        },
-      },
-    },
-    topic: "allUser",
-  };
+// exports.sendNotificationRecurringEvent = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
+//   const message = {
+//     notification: {
+//       title: "Recurring Event Promotion",
+//       body: "You marked your event as recurring! Would you like to promote it with paid advertising?",
+//       image: "",
+//     },
+//     data: {
+//       notification: "12",
+//       information: JSON.stringify({
+//         eventHost: "",
+//       }),
+//       image: "",
+//       date: new Date().toISOString(),
+//     },
+//     android: {
+//       notification: {
+//         sound: "default",
+//         priority: "high",
+//         channelId: "high_importance_channel",
+//       },
+//     },
+//     apns: {
+//       payload: {
+//         aps: {
+//           sound: "default",
+//         },
+//       },
+//     },
+//     topic: "allUser",
+//   };
 
-  try {
-    const response = await admin.messaging().send(message);
-    console.log(`Notification successfully sent to the topic sendNotificationRecurringEvent: ${response}`);
+//   try {
+//     const response = await admin.messaging().send(message);
+//     console.log(`Notification successfully sent to the topic sendNotificationRecurringEvent: ${response}`);
 
-    const usersRef = admin.firestore().collection("user");
+//     const usersRef = admin.firestore().collection("user");
 
-    const batchSize = 500;
-    let lastDoc = null;
-    let hasMoreDocuments = true;
+//     const batchSize = 500;
+//     let lastDoc = null;
+//     let hasMoreDocuments = true;
 
-    while (hasMoreDocuments) {
-      let query = usersRef.limit(batchSize);
-      if (lastDoc) {
-        query = query.startAfter(lastDoc);
-      }
+//     while (hasMoreDocuments) {
+//       let query = usersRef.limit(batchSize);
+//       if (lastDoc) {
+//         query = query.startAfter(lastDoc);
+//       }
 
-      const usersSnapshot = await query.get();
-      if (usersSnapshot.empty) {
-        hasMoreDocuments = false;
-        break;
-      }
+//       const usersSnapshot = await query.get();
+//       if (usersSnapshot.empty) {
+//         hasMoreDocuments = false;
+//         break;
+//       }
 
-      const batch = admin.firestore().batch();
-      usersSnapshot.forEach((doc) => {
-        const userRef = doc.ref;
-        batch.update(userRef, {
-          notifications: admin.firestore.FieldValue.arrayUnion({
-            title: "Recurring Event Promotion",
-            content: "You marked your event as recurring! Would you like to promote it with paid advertising?",
-            notificationType: "12",
-            isRead: false,
-            date: Timestamp.now(),
-            image: "",
-            eventHost: "",
-            navigation: "createevent",
-          }),
-        });
-      });
+//       const batch = admin.firestore().batch();
+//       usersSnapshot.forEach((doc) => {
+//         const userRef = doc.ref;
+//         batch.update(userRef, {
+//           notifications: admin.firestore.FieldValue.arrayUnion({
+//             title: "Recurring Event Promotion",
+//             content: "You marked your event as recurring! Would you like to promote it with paid advertising?",
+//             notificationType: "12",
+//             isRead: false,
+//             date: Timestamp.now(),
+//             image: "",
+//             eventHost: "",
+//             navigation: "createevent",
+//           }),
+//         });
+//       });
 
-      await batch.commit();
-      lastDoc = usersSnapshot.docs[usersSnapshot.docs.length - 1];
-    }
+//       await batch.commit();
+//       lastDoc = usersSnapshot.docs[usersSnapshot.docs.length - 1];
+//     }
 
-    console.log("Notifications successfully added to user documents.");
-  } catch (error) {
-    console.error(`Error sending notification for event sendNotificationRecurringEvent:`, error);
-  }
-});
+//     console.log("Notifications successfully added to user documents.");
+//   } catch (error) {
+//     console.error(`Error sending notification for event sendNotificationRecurringEvent:`, error);
+//   }
+// });
 
 exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
