@@ -1829,12 +1829,12 @@ exports.eventFinish = functions.https.onRequest(async (req, res) => {
   }
 
   const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-  const {eventId, participants} = body;
+  const {eventId, participants, userId, tokensEvent} = body;
 
-  if (!eventId || !participants) {
+  if (!eventId || !participants || !userId || !tokensEvent) {
     return res.status(400).send({
       error: "bad-request",
-      message: "The eventId and participants are required",
+      message: "The eventId, participants, userId and tokens are required",
     });
   }
 
@@ -1842,6 +1842,11 @@ exports.eventFinish = functions.https.onRequest(async (req, res) => {
     await admin.firestore().collection("event").doc(eventId).update({
       isEnd: true,
       isClose: true,
+      ticketsTokens: 0,
+    });
+
+    await admin.firestore().collection("user").doc(userId).update({
+      gTokens: FieldValue.increment(tokensEvent),
     });
 
     const participantRefs = participants.map((path) => {
