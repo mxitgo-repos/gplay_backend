@@ -1788,7 +1788,7 @@ exports.eventClose = functions.https.onRequest(async (req, res) => {
   const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
   const {eventId, newStartDate, newEndDate} = body;
 
-  if (!eventId || !newStartDate || !newEndDate) {
+  if (eventId === undefined || newStartDate === undefined || newEndDate === undefined) {
     return res.status(400).send({
       error: "bad-request",
       message: "The eventId, newStartDate and newEndDate are required",
@@ -1831,12 +1831,14 @@ exports.eventFinish = functions.https.onRequest(async (req, res) => {
   const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
   const {eventId, participants, userId, tokensEvent} = body;
 
-  if (!eventId || !participants || !userId || !tokensEvent) {
+  if (eventId === undefined || participants === undefined || userId === undefined || tokensEvent === undefined) {
     return res.status(400).send({
       error: "bad-request",
       message: "The eventId, participants, userId and tokens are required",
     });
   }
+
+  console.log("---------------> PASE");
 
   try {
     await admin.firestore().collection("event").doc(eventId).update({
@@ -1887,7 +1889,7 @@ exports.validatePhoneNumber = functions.https.onRequest(async (req, res) => {
   const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
   const {phoneNumber} = body;
 
-  if (!phoneNumber) {
+  if (phoneNumber === undefined) {
     return res.status(400).send({
       error: "bad-request",
       message: "The phoneNumber is required",
