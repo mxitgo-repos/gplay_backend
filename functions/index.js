@@ -8,18 +8,6 @@ admin.initializeApp();
 
 const {FieldValue, Timestamp} = admin.firestore;
 
-/* eslint-disable require-jsdoc */
-function generateReferralCode(length = 8) {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "";
-  for (let i = 0; i < length; i++) {
-    const randomIndex = Math.floor(Math.random() * chars.length);
-    code += chars.charAt(randomIndex);
-  }
-  return code;
-}
-/* eslint-enable require-jsdoc */
-
 exports.checkEmail = functions.https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
@@ -1928,48 +1916,24 @@ exports.validatePhoneNumber = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.getUserReferralCode = functions.https.onCall(async (data, context) => {
-  const userId = data.userId;
+exports.getUserData = functions.https.onCall(async (data, context) => {
+  const documentId = data.documentId;
+
   try {
-    const referralSnapshot = await admin.firestore().collection("referrals")
-        .where("userId", "==", userId)
-        .limit(1)
+    const userDoc = await admin.firestore().collection("user")
+        .doc(documentId)
         .get();
 
-    console.log("Referral snapshot:", referralSnapshot.empty);
-
-    if (!referralSnapshot.empty) {
-      const referralDoc = referralSnapshot.docs[0];
-      return {
-        referralCode: referralDoc.data().code,
-      };
+    if (!userDoc.exists) {
+      throw new functions.https.HttpsError(
+          "not-found",
+          "User document not found",
+      );
     }
 
-    let isUnique = false;
-    let code;
-
-    while (!isUnique) {
-      code = generateReferralCode(8);
-      const existingCodeSnapshot = await admin.firestore().collection("referrals")
-          .where("code", "==", code)
-          .limit(1)
-          .get();
-      isUnique = existingCodeSnapshot.empty;
-    }
-
-    const referralData = {
-      userId,
-      code,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
-
-    await admin.firestore().collection("referrals").add(referralData);
-
-    return {
-      referralCode: code,
-    };
+    return userDoc.data();
   } catch (error) {
-    console.error("Error generating referral code:", error);
+    console.error("Error retrieving user document:", error);
     throw new functions.https.HttpsError(
         "internal",
         "Error processing request",
