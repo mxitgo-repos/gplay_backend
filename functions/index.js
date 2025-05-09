@@ -1940,3 +1940,39 @@ exports.getUserData = functions.https.onCall(async (data, context) => {
     );
   }
 });
+
+exports.updateBanking = functions.firestore.document("user/{userId}").onCreate(async (snap, context) => {
+  const pageSize = 500;
+  let lastDoc = null;
+  let hasMore = true;
+  let rank = 1;
+
+  while (hasMore) {
+    let query = db.collection("user")
+        .orderBy("referralCount", "desc")
+        .limit(pageSize);
+
+    if (lastDoc) {
+      query = query.startAfter(lastDoc);
+    }
+
+    const snapshot = await query.get();
+    if (snapshot.empty) break;
+
+    const batch = db.batch();
+
+    snapshot.docs.forEach((doc) => {
+      const userRef = db.collection("user").doc(doc.id);
+      batch.update(userRef, {
+        rank: rank++,
+      });
+    });
+
+    await batch.commit();
+
+    lastDoc = snapshot.docs[snapshot.docs.length - 1];
+    hasMore = snapshot.size === pageSize;
+  }
+
+  console.log("Referral ranking updated after new user");
+});
