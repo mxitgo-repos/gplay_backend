@@ -1948,7 +1948,7 @@ exports.updateBanking = functions.firestore.document("user/{userId}").onCreate(a
   let rank = 1;
 
   while (hasMore) {
-    let query = db.collection("user")
+    let query = admin.firestore().collection("user")
         .orderBy("referralCount", "desc")
         .limit(pageSize);
 
@@ -1959,10 +1959,10 @@ exports.updateBanking = functions.firestore.document("user/{userId}").onCreate(a
     const snapshot = await query.get();
     if (snapshot.empty) break;
 
-    const batch = db.batch();
+    const batch = admin.firestore().batch();
 
     snapshot.docs.forEach((doc) => {
-      const userRef = db.collection("user").doc(doc.id);
+      const userRef = admin.firestore().collection("user").doc(doc.id);
       batch.update(userRef, {
         rank: rank++,
       });
