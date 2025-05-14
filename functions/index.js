@@ -1941,7 +1941,17 @@ exports.getUserData = functions.https.onCall(async (data, context) => {
   }
 });
 
-exports.updateBanking = functions.firestore.document("user/{userId}").onCreate(async (snap, context) => {
+exports.updateBanking = functions.firestore.document("user/{userId}").onUpdate(async (change, context) => {
+  const beforeData = change.before.data();
+  const afterData = change.after.data();
+
+  if (beforeData.referralCount === afterData.referralCount) {
+    console.log("referralCount did not change, ranking update skipped");
+    return null;
+  }
+
+  console.log(`referralCount changed from ${beforeData.referralCount} to ${afterData.referralCount}`);
+
   const pageSize = 500;
   let lastDoc = null;
   let hasMore = true;
@@ -1960,7 +1970,6 @@ exports.updateBanking = functions.firestore.document("user/{userId}").onCreate(a
     if (snapshot.empty) break;
 
     const batch = admin.firestore().batch();
-
     snapshot.docs.forEach((doc) => {
       const userRef = admin.firestore().collection("user").doc(doc.id);
       batch.update(userRef, {
@@ -1969,10 +1978,224 @@ exports.updateBanking = functions.firestore.document("user/{userId}").onCreate(a
     });
 
     await batch.commit();
-
     lastDoc = snapshot.docs[snapshot.docs.length - 1];
     hasMore = snapshot.size === pageSize;
   }
 
-  console.log("Referral ranking updated after new user");
+  console.log("Referral ranking updated after referralCount change");
+  return null;
+});
+
+exports.processReferral = functions.https.onCall(async (data, context) => {
+  try {
+    const details = data;
+
+    if (details.referredBy === "") {
+      return {success: true, message: "There is no referral to process"};
+    }
+
+    const ref1 = details.referredBy;
+    const now = new Date();
+    const formatted = now.toISOString().split("T")[0];
+
+    const ref1Doc = await admin.firestore().collection("user").doc(ref1).get();
+
+    if (!ref1Doc.exists) {
+      return {success: false, message: "The referral does not exist"};
+    }
+
+    const batch1 = admin.firestore().batch();
+
+    batch1.update(admin.firestore().collection("user").doc(details.referredBy), {
+      "level1": admin.firestore.FieldValue.arrayUnion(details.id),
+      "referralCount": admin.firestore.FieldValue.increment(1),
+    });
+
+    batch1.set(
+        admin.firestore().collection("user").doc(details.referredBy).collection("level1").doc(details.id),
+        {
+          "amount": 0,
+          "lastMove": null,
+          "userId": details.id,
+        },
+    );
+
+    batch1.set(
+        admin.firestore().collection("user").doc(details.referredBy).collection("earningsLevel1").doc(formatted),
+        {
+          "earnings": admin.firestore.FieldValue.increment(0),
+          "referralCount": admin.firestore.FieldValue.increment(1),
+        },
+        {merge: true},
+    );
+
+    batch1.set(
+        admin.firestore().collection("mlmEarnings").doc(formatted),
+        {
+          "earnings": admin.firestore.FieldValue.increment(0),
+        },
+        {merge: true},
+    );
+
+    batch1.set(
+        admin.firestore().collection("mlmTracking").doc(details.id),
+        {
+          "lastMove": null,
+          "level": 1,
+        },
+        {merge: true},
+    );
+
+    await batch1.commit();
+
+    const ref2 = ref1Doc.data().referredBy;
+    if (ref2 && ref2 !== "") {
+      const batch2 = admin.firestore().batch();
+
+      batch2.update(admin.firestore().collection("user").doc(ref2), {
+        "level2": admin.firestore.FieldValue.arrayUnion(details.id),
+        "referralCount": admin.firestore.FieldValue.increment(1),
+      });
+
+      batch2.set(
+          admin.firestore().collection("user").doc(ref2).collection("level2").doc(details.id),
+          {
+            "amount": 0,
+            "lastMove": null,
+            "userId": details.id,
+          },
+      );
+
+      batch2.set(
+          admin.firestore().collection("user").doc(ref2).collection("earningsLevel2").doc(formatted),
+          {
+            "earnings": admin.firestore.FieldValue.increment(0),
+            "referralCount": admin.firestore.FieldValue.increment(1),
+          },
+          {merge: true},
+      );
+
+      batch2.set(
+          admin.firestore().collection("mlmEarnings").doc(formatted),
+          {
+            "earnings": admin.firestore.FieldValue.increment(0),
+          },
+          {merge: true},
+      );
+
+      batch2.set(
+          admin.firestore().collection("mlmTracking").doc(details.id),
+          {
+            "lastMove": null,
+            "level": 2,
+          },
+          {merge: true},
+      );
+
+      await batch2.commit();
+
+      const ref2Doc = await admin.firestore().collection("user").doc(ref2).get();
+      const ref3 = ref2Doc.data().referredBy;
+
+      if (ref3 && ref3 !== "") {
+        const batch3 = admin.firestore().batch();
+
+        batch3.update(admin.firestore().collection("user").doc(ref3), {
+          "level3": admin.firestore.FieldValue.arrayUnion(details.id),
+          "referralCount": admin.firestore.FieldValue.increment(1),
+        });
+
+        batch3.set(
+            admin.firestore().collection("user").doc(ref3).collection("level3").doc(details.id),
+            {
+              "amount": 0,
+              "lastMove": null,
+              "userId": details.id,
+            },
+        );
+
+        batch3.set(
+            admin.firestore().collection("user").doc(ref3).collection("earningsLevel3").doc(formatted),
+            {
+              "earnings": admin.firestore.FieldValue.increment(0),
+              "referralCount": admin.firestore.FieldValue.increment(1),
+            },
+            {merge: true},
+        );
+
+        batch3.set(
+            admin.firestore().collection("mlmEarnings").doc(formatted),
+            {
+              "earnings": admin.firestore.FieldValue.increment(0),
+            },
+            {merge: true},
+        );
+
+        batch3.set(
+            admin.firestore().collection("mlmTracking").doc(details.id),
+            {
+              "lastMove": null,
+              "level": 3,
+            },
+            {merge: true},
+        );
+
+        await batch3.commit();
+
+        const ref3Doc = await admin.firestore().collection("user").doc(ref3).get();
+        const ref4 = ref3Doc.data().referredBy;
+
+        if (ref4 && ref4 !== "") {
+          const batch4 = admin.firestore().batch();
+
+          batch4.update(admin.firestore().collection("user").doc(ref4), {
+            "level4": admin.firestore.FieldValue.arrayUnion(details.id),
+            "referralCount": admin.firestore.FieldValue.increment(1),
+          });
+
+          batch4.set(
+              admin.firestore().collection("user").doc(ref4).collection("level4").doc(details.id),
+              {
+                "amount": 0,
+                "lastMove": null,
+                "userId": details.id,
+              },
+          );
+
+          batch4.set(
+              admin.firestore().collection("user").doc(ref4).collection("earningsLevel4").doc(formatted),
+              {
+                "earnings": admin.firestore.FieldValue.increment(0),
+                "referralCount": admin.firestore.FieldValue.increment(1),
+              },
+              {merge: true},
+          );
+
+          batch4.set(
+              admin.firestore().collection("mlmEarnings").doc(formatted),
+              {
+                "earnings": admin.firestore.FieldValue.increment(0),
+              },
+              {merge: true},
+          );
+
+          batch4.set(
+              admin.firestore().collection("mlmTracking").doc(details.id),
+              {
+                "lastMove": null,
+                "level": 4,
+              },
+              {merge: true},
+          );
+
+          await batch4.commit();
+        }
+      }
+    }
+
+    return {success: true, message: "Referrals processed successfully"};
+  } catch (error) {
+    console.error("Error processing referrals:", error);
+    return {success: false, message: "Error: " + error.message};
+  }
 });
