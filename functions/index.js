@@ -1945,6 +1945,7 @@ exports.validatePhoneNumber = functions.https.onRequest(async (req, res) => {
 exports.getUserData = functions.https.onCall(async (data, context) => {
   const documentId = data.documentId;
 
+  console.log("Document ID:", documentId);
   try {
     const userDoc = await admin.firestore().collection("user")
         .doc(documentId)
@@ -1957,7 +1958,16 @@ exports.getUserData = functions.https.onCall(async (data, context) => {
       );
     }
 
-    return userDoc.data();
+    const userData = userDoc.data();
+
+    const sanitizedData = JSON.parse(JSON.stringify(userData, (key, value) => {
+      if (value && typeof value === "object" && value.constructor.name === "Timestamp") {
+        return value.toDate().toISOString();
+      }
+      return value;
+    }));
+
+    return sanitizedData;
   } catch (error) {
     console.error("Error retrieving user document:", error);
     throw new functions.https.HttpsError(
@@ -2059,6 +2069,7 @@ exports.processReferral = functions.https.onCall(async (data, context) => {
         admin.firestore().collection("mlmEarnings").doc(formatted),
         {
           "earnings": admin.firestore.FieldValue.increment(0),
+          "dateEarnings": admin.firestore.FieldValue.serverTimestamp(),
         },
         {merge: true},
     );
@@ -2068,6 +2079,7 @@ exports.processReferral = functions.https.onCall(async (data, context) => {
         {
           "lastMove": null,
           "level": 1,
+          "mlmTrackingCreated": admin.firestore.FieldValue.serverTimestamp(),
         },
         {merge: true},
     );
@@ -2105,6 +2117,7 @@ exports.processReferral = functions.https.onCall(async (data, context) => {
           admin.firestore().collection("mlmEarnings").doc(formatted),
           {
             "earnings": admin.firestore.FieldValue.increment(0),
+            "dateEarnings": admin.firestore.FieldValue.serverTimestamp(),
           },
           {merge: true},
       );
@@ -2114,6 +2127,7 @@ exports.processReferral = functions.https.onCall(async (data, context) => {
           {
             "lastMove": null,
             "level": 2,
+            "mlmTrackingCreated": admin.firestore.FieldValue.serverTimestamp(),
           },
           {merge: true},
       );
@@ -2153,6 +2167,7 @@ exports.processReferral = functions.https.onCall(async (data, context) => {
             admin.firestore().collection("mlmEarnings").doc(formatted),
             {
               "earnings": admin.firestore.FieldValue.increment(0),
+              "dateEarnings": admin.firestore.FieldValue.serverTimestamp(),
             },
             {merge: true},
         );
@@ -2162,6 +2177,7 @@ exports.processReferral = functions.https.onCall(async (data, context) => {
             {
               "lastMove": null,
               "level": 3,
+              "mlmTrackingCreated": admin.firestore.FieldValue.serverTimestamp(),
             },
             {merge: true},
         );
@@ -2201,6 +2217,7 @@ exports.processReferral = functions.https.onCall(async (data, context) => {
               admin.firestore().collection("mlmEarnings").doc(formatted),
               {
                 "earnings": admin.firestore.FieldValue.increment(0),
+                "dateEarnings": admin.firestore.FieldValue.serverTimestamp(),
               },
               {merge: true},
           );
@@ -2210,6 +2227,7 @@ exports.processReferral = functions.https.onCall(async (data, context) => {
               {
                 "lastMove": null,
                 "level": 4,
+                "mlmTrackingCreated": admin.firestore.FieldValue.serverTimestamp(),
               },
               {merge: true},
           );
