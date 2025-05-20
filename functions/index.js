@@ -1662,6 +1662,32 @@ exports.createPaymentIntent = functions.https.onCall(async (data, context) => {
   }
 });
 
+exports.createPaymentIntentIos = functions.https.onCall(async (data, context) => {
+  try {
+    const {amount, currency} = data;
+
+    const customer = await stripe.customers.create();
+
+    const ephemeralKey = await stripe.ephemeralKeys.create(
+        {customer: customer.id},
+        {apiVersion: "2023-10-16"},
+    );
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amount,
+      currency: currency,
+      customer: customer.id,
+      payment_method_types: ["card"],
+    });
+
+    return {success: true, paymentIntent: paymentIntent.client_secret, ephemeralKey: ephemeralKey.secret, customer: customer.id, paymentIntentId: paymentIntent.id};
+  } catch (error) {
+    console.error("Stripe error:", error);
+    throw new functions.https.HttpsError("internal", error.message);
+  }
+});
+
+
 exports.sendNotificationAdminStrikes = functions.https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
@@ -2199,3 +2225,79 @@ exports.processReferral = functions.https.onCall(async (data, context) => {
     return {success: false, message: "Error: " + error.message};
   }
 });
+
+exports.updateAmbassadorRankings = functions.firestore.document("user/{userId}").onUpdate(async (change, context) => {
+  const beforeData = change.before.data();
+  const afterData = change.after.data();
+
+  if (beforeData.referralCount === afterData.referralCount) {
+    console.log("referralCount did not change, ranking update skipped");
+    return null;
+  }
+
+  console.log(`referralCount changed from ${beforeData.referralCount} to ${afterData.referralCount}`);
+
+  const levels = ["level1", "level2", "level3", "level4"];
+
+  for (const level of levels) {
+    await updateRankingForLevel(level);
+  }
+
+  console.log("Ambassador rankings updated after referralCount change");
+  return null;
+});
+
+exports.updateAmbassadorRankingsManual = functions.https.onCall(async (data, context) => {
+  console.log("Starting manual update of ambassador rankings");
+
+  const levels = ["level1", "level2", "level3", "level4"];
+
+  for (const level of levels) {
+    await updateRankingForLevel(level);
+  }
+
+  console.log("Manual update of ambassador rankings completed");
+
+  return {success: true, message: "Rankings updated correctly"};
+});
+
+/**
+ * Actualiza el ranking de embajadores para un nivel específico
+ * @param {string} level - El nivel de embajador (level1, level2, level3, level4)
+ * @return {Promise<void>} - Promesa que se resuelve cuando se completa la actualización
+ */
+async function updateRankingForLevel(level) {
+  console.log(`Updating ranking for ${level}`);
+  const pageSize = 500;
+  let lastDoc = null;
+  let hasMore = true;
+  let rank = 1;
+
+  while (hasMore) {
+    let query = admin.firestore().collection("user")
+        .where("currentLevelAmbasador", "==", level)
+        .orderBy("referralCount", "desc")
+        .limit(pageSize);
+
+    if (lastDoc) {
+      query = query.startAfter(lastDoc);
+    }
+
+    const snapshot = await query.get();
+    if (snapshot.empty) break;
+
+    const batch = admin.firestore().batch();
+    snapshot.docs.forEach((doc) => {
+      const userRef = admin.firestore().collection("user").doc(doc.id);
+      batch.update(userRef, {
+        rankAmbasador: rank++,
+      });
+    });
+
+    await batch.commit();
+    lastDoc = snapshot.docs[snapshot.docs.length - 1];
+    hasMore = snapshot.size === pageSize;
+  }
+
+  console.log(`Ranking updated for level ${level}`);
+}
