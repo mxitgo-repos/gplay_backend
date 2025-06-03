@@ -1687,7 +1687,6 @@ exports.createPaymentIntentIos = functions.https.onCall(async (data, context) =>
   }
 });
 
-
 exports.sendNotificationAdminStrikes = functions.https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
@@ -1754,7 +1753,7 @@ exports.sendNotificationAdminStrikes = functions.https.onRequest(async (req, res
         date: Timestamp.now(),
         image: imageMessage == undefined && imageMessage == null ? "" : imageMessage,
         navigation: "",
-        url: urlMessage == undefined && urlMessage,
+        url: urlMessage == undefined && urlMessage == null ? "" : urlMessage,
       }),
     });
 
@@ -2319,3 +2318,85 @@ async function updateRankingForLevel(level) {
 
   console.log(`Ranking updated for level ${level}`);
 }
+
+exports.sendNotificationSendGift = functions.https.onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "POST");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "POST");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    res.set("Access-Control-Max-Age", "3600");
+    return res.status(204).send("");
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const {titleMessage, bodyMessage, imageMessage, urlMessage, userId} = req.body;
+
+  if (!titleMessage || !bodyMessage) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The titleMessage and bodyMessage of the notification are required",
+    });
+  }
+
+  const message = {
+    notification: {
+      title: titleMessage,
+      body: bodyMessage,
+    },
+    data: {
+      notification: "17",
+      image: imageMessage == undefined && imageMessage == null ? "" : imageMessage,
+      url: urlMessage == undefined && urlMessage == null ? "" : urlMessage,
+      date: new Date().toISOString(),
+    },
+    android: {
+      notification: {
+        sound: "default",
+        priority: "high",
+        channelId: "high_importance_channel",
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+    topic: `${userId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+  };
+
+  try {
+    await admin.messaging().send(message);
+    console.log("Notification successfully sent to the topic: sendNotificationSendGift");
+
+    await admin.firestore().collection("user").doc(userId).update({
+      notifications: FieldValue.arrayUnion({
+        title: titleMessage,
+        content: bodyMessage,
+        notificationType: "17",
+        isRead: false,
+        date: Timestamp.now(),
+        image: imageMessage == undefined && imageMessage == null ? "" : imageMessage,
+        navigation: "",
+        url: urlMessage == undefined && urlMessage == null ? "" : urlMessage,
+      }),
+    });
+
+    console.log("Notifications successfully added to user documents.");
+    return res.status(200).send({message: "Notification sent successfully"});
+  } catch (error) {
+    console.error("Error sending sendNotificationSendGift notification:", error);
+    return res.status(500).send({
+      error: "internal",
+      message: "Error sending sendNotificationSendGift notification",
+      details: error.message,
+    });
+  }
+});
