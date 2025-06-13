@@ -414,7 +414,7 @@ exports.sendNotificationByState = functions.firestore.document("event/{eventId}"
   }
 });
 
-exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * 1").onRun(async (context) => {
+exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * 1,3,5").onRun(async (context) => {
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
 
