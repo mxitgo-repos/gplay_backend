@@ -414,20 +414,20 @@ exports.sendNotificationByState = functions.firestore.document("event/{eventId}"
   }
 });
 
-exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * 1,3,5").onRun(async (context) => {
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
+exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * *").onRun(async (context) => {
+  const tomorrow = new Date();
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  tomorrow.setUTCHours(0, 0, 0, 0);
 
-  const endDate = new Date(today);
-  endDate.setUTCDate(today.getUTCDate() + 7);
-  endDate.setUTCHours(23, 59, 59, 999);
+  const endOfTomorrow = new Date(tomorrow);
+  endOfTomorrow.setUTCHours(23, 59, 59, 999);
 
-  console.log(`Searching for events from today (${today.toISOString().slice(0, 10)}) to ${endDate.toISOString().slice(0, 10)}`);
+  console.log(`Searching for events tomorrow (${tomorrow.toISOString().slice(0, 10)})`);
 
   try {
     const snapshot = await admin.firestore().collection("event")
-        .where("startDate", ">=", today)
-        .where("startDate", "<=", endDate)
+        .where("startDate", ">=", tomorrow)
+        .where("startDate", "<=", endOfTomorrow)
         .get();
 
     if (snapshot.empty) {
