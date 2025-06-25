@@ -1854,16 +1854,14 @@ exports.eventFinish = functions.https.onRequest(async (req, res) => {
   }
 
   const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-  const {eventId, participants, userId, tokensEvent} = body;
+  const {eventId, participants, userId, tokensEvent, isSelling} = body;
 
-  if (eventId === undefined || participants === undefined || userId === undefined || tokensEvent === undefined) {
+  if (eventId === undefined || participants === undefined || userId === undefined || tokensEvent === undefined || isSelling === undefined) {
     return res.status(400).send({
       error: "bad-request",
-      message: "The eventId, participants, userId and tokens are required",
+      message: "The eventId, participants, userId, tokens and isSelling are required",
     });
   }
-
-  console.log("---------------> PASE");
 
   try {
     await admin.firestore().collection("event").doc(eventId).update({
@@ -1872,8 +1870,11 @@ exports.eventFinish = functions.https.onRequest(async (req, res) => {
       ticketsTokens: 0,
     });
 
+    const gtokensTotal = isSelling ? (tokensEvent + 100) : tokensEvent;
+
     await admin.firestore().collection("user").doc(userId).update({
-      gTokens: FieldValue.increment(tokensEvent),
+      gTokens: FieldValue.increment(gtokensTotal),
+      retentionGTokens: FieldValue.increment(isSelling ? -100 : 0),
     });
 
     const participantRefs = participants.map((path) => {
