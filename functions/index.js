@@ -1854,16 +1854,120 @@ exports.eventFinish = functions.https.onRequest(async (req, res) => {
   }
 
   const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-  const {eventId, participants, userId, tokensEvent, isSelling} = body;
 
-  if (eventId === undefined || participants === undefined || userId === undefined || tokensEvent === undefined || isSelling === undefined) {
+  const {
+    eventId,
+    participants,
+    userId,
+    tokensEvent,
+    isSelling,
+    usersPaid,
+    price,
+    levelsPercentage,
+    feeOption,
+  } = body;
+
+  if (eventId === undefined ||
+      participants === undefined ||
+      userId === undefined ||
+      tokensEvent === undefined ||
+      isSelling === undefined ||
+      usersPaid === undefined ||
+      price === undefined ||
+      levelsPercentage === undefined ||
+      feeOption === undefined) {
     return res.status(400).send({
       error: "bad-request",
-      message: "The eventId, participants, userId, tokens and isSelling are required",
+      message: "The eventId, participants, userId, tokensEvent, isSelling, usersPaid, levelsPercentage, price and feeOption are required",
     });
   }
 
   try {
+    let referralProcessedCount = 0;
+
+    for (const paidUserId of usersPaid) {
+      try {
+        const userDoc = await admin.firestore().collection("user").doc(paidUserId).get();
+
+        if (!userDoc.exists) {
+          console.log(`User ${paidUserId} does not exist`);
+          continue;
+        }
+
+        const userData = userDoc.data();
+        const referredBy = userData.referredBy;
+
+        if (referredBy && referredBy !== "") {
+          const ref1Doc = await admin.firestore().collection("user").doc(referredBy).get();
+
+          if (ref1Doc.exists) {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, "0");
+            const day = String(now.getDate()).padStart(2, "0");
+            const formatted = `${year}-${month}-${day}`;
+
+            const gTokensPercentage = price * (feeOption / 100);
+
+            referralProcessedCount += gTokensPercentage;
+
+            console.log(`User ${referredBy} LE VAMOS A DAR ${gTokensPercentage}`);
+
+            await admin.firestore().collection("user").doc(referredBy).update({
+              "earningsReferral.level1": FieldValue.increment(gTokensPercentage),
+              "earningsReferral.total": FieldValue.increment(gTokensPercentage),
+              "gTokens": FieldValue.increment(gTokensPercentage),
+              "transactionsReferral": FieldValue.arrayUnion({
+                "date": formatted,
+                "amount": gTokensPercentage,
+                "type": "ticket_purchase",
+                "event": eventId,
+              }),
+            });
+
+            await admin.firestore()
+                .collection("user")
+                .doc(referredBy)
+                .collection("level1")
+                .doc(paidUserId)
+                .set({
+                  "amount": gTokensPercentage,
+                  "userId": paidUserId,
+                  "lastMove": FieldValue.serverTimestamp(),
+                }, {merge: true});
+
+            await admin.firestore()
+                .collection("user")
+                .doc(referredBy)
+                .collection("earningsLevel1")
+                .doc(formatted)
+                .set({
+                  "earnings": FieldValue.increment(gTokensPercentage),
+                }, {merge: true});
+
+            await admin.firestore()
+                .collection("mlmEarnings")
+                .doc(formatted)
+                .set({
+                  "earnings": FieldValue.increment(gTokensPercentage),
+                  "dateEarnings": FieldValue.serverTimestamp(),
+                }, {merge: true});
+
+            await admin.firestore()
+                .collection("mlmTracking")
+                .doc(paidUserId)
+                .set({
+                  "lastMove": FieldValue.serverTimestamp(),
+                  "level": 1,
+                }, {merge: true});
+          }
+        }
+      } catch (error) {
+        console.error(`Error processing user ${paidUserId}:`, error.message);
+        return res.status(500).send({error: "internal", message: "Error finishing event referral proccess", details: error.message});
+      }
+    }
+
     await admin.firestore().collection("event").doc(eventId).update({
       isEnd: true,
       isClose: true,
@@ -1875,6 +1979,12 @@ exports.eventFinish = functions.https.onRequest(async (req, res) => {
     await admin.firestore().collection("user").doc(userId).update({
       gTokens: FieldValue.increment(gtokensTotal),
       retentionGTokens: FieldValue.increment(isSelling ? -100 : 0),
+    });
+
+    console.log(`User ${userId} LE VAMOS A QUITAR ${referralProcessedCount}`);
+
+    await admin.firestore().collection("user").doc(userId).update({
+      gTokens: FieldValue.increment(-referralProcessedCount),
     });
 
     const participantRefs = participants.map((path) => {
