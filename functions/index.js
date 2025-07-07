@@ -2511,3 +2511,137 @@ exports.sendNotificationSendGift = functions.https.onRequest(async (req, res) =>
     });
   }
 });
+
+exports.countAmbassadorUsers = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+  const {userId} = body;
+
+  if (userId === undefined) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The userId is required",
+    });
+  }
+
+  try {
+    const userDoc = await admin.firestore().collection("user").doc(userId).get();
+
+    if (!userDoc.exists) {
+      return res.status(404).send({
+        error: "not-found",
+        message: `User with ID ${userId} not found`,
+      });
+    }
+
+    const userData = userDoc.data();
+
+    const userIdsList = userData.level1;
+
+    if (!Array.isArray(userIdsList) || userIdsList.length === 0) {
+      return res.status(200).send({
+        message: "No user IDs to process",
+        count: 0,
+        totalProcessed: 0,
+        totalUsers: 0,
+        completed: true,
+      });
+    }
+
+    let count = 0;
+    let totalProcessed = 0;
+    const maxCount = 10;
+    const pageSize = 25;
+    let currentIndex = 0;
+
+    console.log(`Starting ambassador count process for user ${userId} with ${userIdsList.length} users to check`);
+
+    while (currentIndex < userIdsList.length && count < maxCount) {
+      try {
+        const endIndex = Math.min(currentIndex + pageSize, userIdsList.length);
+        const currentBatch = userIdsList.slice(currentIndex, endIndex);
+
+        console.log(`Processing batch ${Math.floor(currentIndex / pageSize) + 1}: users ${currentIndex + 1} to ${endIndex}`);
+
+        for (const id of currentBatch) {
+          try {
+            const userToCheckDoc = await admin.firestore().collection("user").doc(id).get();
+
+            if (userToCheckDoc.exists) {
+              const userToCheckData = userToCheckDoc.data();
+              const currentLevelAmbasador = userToCheckData.currentLevelAmbasador || "";
+
+              if (currentLevelAmbasador.trim() !== "") {
+                count++;
+                console.log(`User ${id} has ambassador level: "${currentLevelAmbasador}" (${count}/${maxCount})`);
+
+                if (count >= maxCount) {
+                  console.log(`Reached maximum count of ${maxCount} users with ambassador level`);
+                  break;
+                }
+              }
+            } else {
+              console.log(`User ${id} does not exist, skipping`);
+            }
+
+            totalProcessed++;
+          } catch (userError) {
+            console.error(`Error processing user ${id}:`, userError.message);
+            totalProcessed++;
+            continue;
+          }
+        }
+
+        if (count >= maxCount) {
+          break;
+        }
+
+        currentIndex = endIndex;
+
+        if (currentIndex < userIdsList.length && count < maxCount) {
+          await new Promise((resolve) =>{
+            setTimeout(resolve, 50);
+          });
+        }
+      } catch (batchError) {
+        console.error(`Error processing batch starting at index ${currentIndex}:`, batchError.message);
+
+        currentIndex = Math.min(currentIndex + pageSize, userIdsList.length);
+        continue;
+      }
+    }
+
+    console.log(`Process completed for user ${userId}: Found ${count} users with ambassador level out of ${totalProcessed} processed`);
+
+    if (count >= 10) {
+      let  updateSubTasksAmbassador = userData.subTasksAmbassador;
+      updateSubTasksAmbassador[1] = {
+        ...updateSubTasksAmbassador[1],
+        "readyClaim": true,
+        "isClaimed": true,
+        "lastClaimed": userData.serverDate,
+        "total": 10,
+      };
+
+      await admin.firestore().collection("user").doc(userId).update({
+        subTasksAmbassador: updateSubTasksAmbassador,
+      });
+    }
+
+    return res.status(200).send({
+      message: `Successfully counted ambassador users for user ${userId}`,
+      count: count,
+    });
+  } catch (error) {
+    console.error(`Error in countAmbassadorUsers for user ${userId}:`, error.message);
+    return res.status(500).send({
+      error: "internal",
+      message: "Error counting ambassador users",
+      userId: userId,
+      details: error.message,
+    });
+  }
+});
