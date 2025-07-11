@@ -8,6 +8,16 @@ admin.initializeApp();
 
 const {FieldValue, Timestamp} = admin.firestore;
 
+const BATCH_SIZE = 500;
+const CONCURRENT_LIMIT = 10;
+const LEVEL_CONFIG = {
+  level0: {minParticipants: 3, taskIndex: 0},
+  level1: {minParticipants: 3, taskIndex: 0},
+  level2: {minParticipants: 5, taskIndex: 0},
+  level3: {minParticipants: 15, taskIndex: 0, maxTotal: 3},
+  level4: {minParticipants: 25, taskIndex: 0, maxTotal: 5, isSubTask: true},
+};
+
 exports.checkEmail = functions.https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
@@ -1848,172 +1858,210 @@ exports.eventClose = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.eventFinish = functions.https.onRequest(async (req, res) => {
+exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
 
-  const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-
-  const {
-    eventId,
-    participants,
-    userId,
-    tokensEvent,
-    isSelling,
-    usersPaid,
-    price,
-    levelsPercentage,
-    feeOption,
-  } = body;
-
-  if (eventId === undefined ||
-      participants === undefined ||
-      userId === undefined ||
-      tokensEvent === undefined ||
-      isSelling === undefined ||
-      usersPaid === undefined ||
-      price === undefined ||
-      levelsPercentage === undefined ||
-      feeOption === undefined) {
+  let body;
+  try {
+    body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+  } catch (error) {
     return res.status(400).send({
       error: "bad-request",
-      message: "The eventId, participants, userId, tokensEvent, isSelling, usersPaid, levelsPercentage, price and feeOption are required",
+      message: "Invalid JSON in request body",
     });
   }
 
+  const requiredFields = [
+    "eventId", "participants", "userId", "tokensEvent",
+    "isSelling", "usersPaid", "price", "levelsPercentage", "feeOption",
+  ];
+
+  const missingFields = requiredFields.filter((field) => body[field] === undefined);
+  if (missingFields.length > 0) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: `Missing required fields: ${missingFields.join(", ")}`,
+    });
+  }
+
+  const {
+    eventId, participants, userId, tokensEvent, isSelling,
+    usersPaid, price, feeOption,
+  } = body;
+
+  if (!Array.isArray(usersPaid) || !Array.isArray(participants)) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "usersPaid and participants must be arrays",
+    });
+  }
+
+  const db = admin.firestore();
+  let batch = db.batch();
+  let batchOperations = 0;
+
   try {
+    const dateFormatted = getFormattedDate();
+    const gTokensPercentage = price * (feeOption / 100);
     let referralProcessedCount = 0;
 
-    for (const paidUserId of usersPaid) {
+    const processReferralUser = async (paidUserId) => {
       try {
-        const userDoc = await admin.firestore().collection("user").doc(paidUserId).get();
+        const userDoc = await db.collection("user").doc(paidUserId).get();
 
         if (!userDoc.exists) {
           console.log(`User ${paidUserId} does not exist`);
-          continue;
+          return 0;
         }
 
         const userData = userDoc.data();
         const referredBy = userData.referredBy;
 
-        if (referredBy && referredBy !== "") {
-          const ref1Doc = await admin.firestore().collection("user").doc(referredBy).get();
+        if (!referredBy) return 0;
 
-          if (ref1Doc.exists) {
-            const now = new Date();
-            const year = now.getFullYear();
-            const month = String(now.getMonth() + 1).padStart(2, "0");
-            const day = String(now.getDate()).padStart(2, "0");
-            const formatted = `${year}-${month}-${day}`;
+        const ref1Doc = await db.collection("user").doc(referredBy).get();
+        if (!ref1Doc.exists) return 0;
 
-            const gTokensPercentage = price * (feeOption / 100);
+        console.log(`User ${referredBy} receives ${gTokensPercentage} tokens`);
 
-            referralProcessedCount += gTokensPercentage;
-
-            console.log(`User ${referredBy} LE VAMOS A DAR ${gTokensPercentage}`);
-
-            await admin.firestore().collection("user").doc(referredBy).update({
-              "earningsReferral.level1": FieldValue.increment(gTokensPercentage),
-              "earningsReferral.total": FieldValue.increment(gTokensPercentage),
-              "gTokens": FieldValue.increment(gTokensPercentage),
-              "transactionsReferral": FieldValue.arrayUnion({
-                "date": formatted,
-                "amount": gTokensPercentage,
-                "type": "ticket_purchase",
-                "event": eventId,
-              }),
-            });
-
-            await admin.firestore()
-                .collection("user")
-                .doc(referredBy)
-                .collection("level1")
-                .doc(paidUserId)
-                .set({
-                  "amount": gTokensPercentage,
-                  "userId": paidUserId,
-                  "lastMove": FieldValue.serverTimestamp(),
-                }, {merge: true});
-
-            await admin.firestore()
-                .collection("user")
-                .doc(referredBy)
-                .collection("earningsLevel1")
-                .doc(formatted)
-                .set({
-                  "earnings": FieldValue.increment(gTokensPercentage),
-                }, {merge: true});
-
-            await admin.firestore()
-                .collection("mlmEarnings")
-                .doc(formatted)
-                .set({
-                  "earnings": FieldValue.increment(gTokensPercentage),
-                  "dateEarnings": FieldValue.serverTimestamp(),
-                }, {merge: true});
-
-            await admin.firestore()
-                .collection("mlmTracking")
-                .doc(paidUserId)
-                .set({
-                  "lastMove": FieldValue.serverTimestamp(),
-                  "level": 1,
-                }, {merge: true});
-          }
+        if (batchOperations >= BATCH_SIZE - 10) {
+          await batch.commit();
+          batch = db.batch();
+          batchOperations = 0;
         }
+
+        const userRef = db.collection("user").doc(referredBy);
+        const level1Ref = userRef.collection("level1").doc(paidUserId);
+        const earningsRef = userRef.collection("earningsLevel1").doc(dateFormatted);
+        const mlmEarningsRef = db.collection("mlmEarnings").doc(dateFormatted);
+        const mlmTrackingRef = db.collection("mlmTracking").doc(paidUserId);
+
+        batch.update(userRef, {
+          "earningsReferral.level1": FieldValue.increment(gTokensPercentage),
+          "earningsReferral.total": FieldValue.increment(gTokensPercentage),
+          "gTokens": FieldValue.increment(gTokensPercentage),
+          "transactionsReferral": FieldValue.arrayUnion({
+            "date": dateFormatted,
+            "amount": gTokensPercentage,
+            "type": "ticket_purchase",
+            "event": eventId,
+          }),
+        });
+
+        batch.set(level1Ref, {
+          "amount": gTokensPercentage,
+          "userId": paidUserId,
+          "lastMove": FieldValue.serverTimestamp(),
+        }, {merge: true});
+
+        batch.set(earningsRef, {
+          "earnings": FieldValue.increment(gTokensPercentage),
+        }, {merge: true});
+
+        batch.set(mlmEarningsRef, {
+          "earnings": FieldValue.increment(gTokensPercentage),
+          "dateEarnings": FieldValue.serverTimestamp(),
+        }, {merge: true});
+
+        batch.set(mlmTrackingRef, {
+          "lastMove": FieldValue.serverTimestamp(),
+          "level": 1,
+        }, {merge: true});
+
+        batchOperations += 5;
+        return gTokensPercentage;
       } catch (error) {
         console.error(`Error processing user ${paidUserId}:`, error.message);
-        return res.status(500).send({error: "internal", message: "Error finishing event referral proccess", details: error.message});
+        return 0;
       }
+    };
+
+    console.log(`Processing ${usersPaid.length} referral users`);
+    const referralResults = await processInChunks(
+        usersPaid,
+        CONCURRENT_LIMIT,
+        processReferralUser,
+    );
+
+    referralProcessedCount = referralResults.reduce((sum, amount) => sum + amount, 0);
+
+    if (batchOperations >= BATCH_SIZE - 5) {
+      await batch.commit();
+      batch = db.batch();
+      batchOperations = 0;
     }
 
-    await admin.firestore().collection("event").doc(eventId).update({
+    const eventRef = db.collection("event").doc(eventId);
+    batch.update(eventRef, {
       isEnd: true,
       isClose: true,
       ticketsTokens: 0,
     });
+    batchOperations += 1;
 
     const gtokensTotal = isSelling ? (tokensEvent + 100) : tokensEvent;
+    const userRef = db.collection("user").doc(userId);
 
-    await admin.firestore().collection("user").doc(userId).update({
-      gTokens: FieldValue.increment(gtokensTotal),
+    batch.update(userRef, {
+      gTokens: FieldValue.increment(gtokensTotal - referralProcessedCount),
       retentionGTokens: FieldValue.increment(isSelling ? -100 : 0),
     });
+    batchOperations += 1;
 
-    console.log(`User ${userId} LE VAMOS A QUITAR ${referralProcessedCount}`);
+    console.log(`User ${userId} tokens deducted: ${referralProcessedCount}`);
 
-    await admin.firestore().collection("user").doc(userId).update({
-      gTokens: FieldValue.increment(-referralProcessedCount),
-    });
+    const participantRefs = participants.map((path) => db.doc(path));
 
-    const participantRefs = participants.map((path) => {
-      const docRef = admin.firestore().doc(path);
-      return {
-        ref: docRef,
-        id: docRef.id,
-      };
-    });
+    participantRefs.forEach((ref, index) => {
+      if (batchOperations >= BATCH_SIZE - 2) return;
 
-    const updatePromises = participantRefs.map(async ({ref, id}) => {
-      const otherParticipantRefs = participantRefs
-          .filter((p) => p.id !== id)
-          .map((p) => p.ref);
-
+      const otherParticipantRefs = participantRefs.filter((_, i) => i !== index);
       if (otherParticipantRefs.length > 0) {
-        return admin.firestore().collection("user").doc(id).update({
+        batch.update(ref, {
           knownPeopleRef: FieldValue.arrayUnion(...otherParticipantRefs),
         });
+        batchOperations += 1;
       }
-
-      return Promise.resolve();
     });
 
-    await Promise.all(updatePromises);
+    await batch.commit();
 
-    return res.status(200).send({message: "Event finished successfully"});
+    const [userDoc, eventDoc] = await Promise.all([
+      db.collection("user").doc(userId).get(),
+      db.collection("event").doc(eventId).get(),
+    ]);
+
+    if (userDoc.exists && eventDoc.exists) {
+      const userData = userDoc.data();
+      const eventData = eventDoc.data();
+      const participantCount = eventData.participantsRef.length || 0;
+
+      await updateAmbassadorTasks(userId, userData, participantCount);
+    }
+
+    console.log(`Event ${eventId} finished successfully`);
+    return res.status(200).send({
+      message: "Event finished successfully",
+      referralProcessed: referralProcessedCount,
+    });
   } catch (error) {
-    return res.status(500).send({error: "internal", message: "Error finishing event", details: error.message});
+    console.error("Error in eventFinish:", error);
+
+    try {
+      if (batchOperations > 0) {
+        console.error("Batch operations were pending, manual cleanup might be needed");
+      }
+    } catch (rollbackError) {
+      console.error("Rollback error:", rollbackError);
+    }
+
+    return res.status(500).send({
+      error: "internal",
+      message: "Error finishing event",
+      details: process.env.NODE_ENV === "development" ? error.message : "Internal server error",
+    });
   }
 });
 
@@ -2389,47 +2437,6 @@ exports.updateAmbassadorRankingsManual = functions.https.onCall(async (data, con
   return {success: true, message: "Rankings updated correctly"};
 });
 
-/**
- * Actualiza el ranking de embajadores para un nivel específico
- * @param {string} level - El nivel de embajador (level1, level2, level3, level4)
- * @return {Promise<void>} - Promesa que se resuelve cuando se completa la actualización
- */
-async function updateRankingForLevel(level) {
-  console.log(`Updating ranking for ${level}`);
-  const pageSize = 500;
-  let lastDoc = null;
-  let hasMore = true;
-  let rank = 1;
-
-  while (hasMore) {
-    let query = admin.firestore().collection("user")
-        .where("currentLevelAmbasador", "==", level)
-        .orderBy("referralCount", "desc")
-        .limit(pageSize);
-
-    if (lastDoc) {
-      query = query.startAfter(lastDoc);
-    }
-
-    const snapshot = await query.get();
-    if (snapshot.empty) break;
-
-    const batch = admin.firestore().batch();
-    snapshot.docs.forEach((doc) => {
-      const userRef = admin.firestore().collection("user").doc(doc.id);
-      batch.update(userRef, {
-        rankAmbasador: rank++,
-      });
-    });
-
-    await batch.commit();
-    lastDoc = snapshot.docs[snapshot.docs.length - 1];
-    hasMore = snapshot.size === pageSize;
-  }
-
-  console.log(`Ranking updated for level ${level}`);
-}
-
 exports.sendNotificationSendGift = functions.https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
@@ -2617,7 +2624,7 @@ exports.countAmbassadorUsers = functions.https.onRequest(async (req, res) => {
     console.log(`Process completed for user ${userId}: Found ${count} users with ambassador level out of ${totalProcessed} processed`);
 
     if (count >= 10) {
-      let  updateSubTasksAmbassador = userData.subTasksAmbassador;
+      const updateSubTasksAmbassador = userData.subTasksAmbassador;
       updateSubTasksAmbassador[1] = {
         ...updateSubTasksAmbassador[1],
         "readyClaim": true,
@@ -2645,3 +2652,128 @@ exports.countAmbassadorUsers = functions.https.onRequest(async (req, res) => {
     });
   }
 });
+
+/**
+ * Actualiza el ranking de embajadores para un nivel específico
+ * @param {string} level - El nivel de embajador (level1, level2, level3, level4)
+ * @return {Promise<void>} - Promesa que se resuelve cuando se completa la actualización
+ */
+async function updateRankingForLevel(level) {
+  console.log(`Updating ranking for ${level}`);
+  const pageSize = 500;
+  let lastDoc = null;
+  let hasMore = true;
+  let rank = 1;
+
+  while (hasMore) {
+    let query = admin.firestore().collection("user")
+        .where("currentLevelAmbasador", "==", level)
+        .orderBy("referralCount", "desc")
+        .limit(pageSize);
+
+    if (lastDoc) {
+      query = query.startAfter(lastDoc);
+    }
+
+    const snapshot = await query.get();
+    if (snapshot.empty) break;
+
+    const batch = admin.firestore().batch();
+    snapshot.docs.forEach((doc) => {
+      const userRef = admin.firestore().collection("user").doc(doc.id);
+      batch.update(userRef, {
+        rankAmbasador: rank++,
+      });
+    });
+
+    await batch.commit();
+    lastDoc = snapshot.docs[snapshot.docs.length - 1];
+    hasMore = snapshot.size === pageSize;
+  }
+
+  console.log(`Ranking updated for level ${level}`);
+}
+
+/**
+ * Updates ambassador tasks based on participant count and user level
+ * @param {string} userId - The user ID to update tasks for
+ * @param {Object} userData - The user data containing current level and tasks
+ * @param {number} participantCount - Number of participants in the event
+ * @return {Promise<void>} Promise that resolves when tasks are updated
+ */
+async function updateAmbassadorTasks(userId, userData, participantCount) {
+  const currentLevel = userData.currentLevelAmbasador;
+  const config = LEVEL_CONFIG[currentLevel];
+
+  if (!config) return;
+
+  const updates = {};
+
+  if (config.isSubTask && userData.subTasksAmbassador.length > 0) {
+    const task = userData.subTasksAmbassador[0];
+    if (!task.readyClaim && task.total < config.maxTotal && participantCount >= config.minParticipants) {
+      const newTotal = task.total + 1;
+      updates.subTasksAmbassador = [...userData.subTasksAmbassador];
+      updates.subTasksAmbassador[0] = {
+        ...task,
+        total: newTotal,
+        readyClaim: newTotal >= config.maxTotal,
+      };
+    }
+  } else if (userData.tasksAmbassador.length > 0) {
+    const task = userData.tasksAmbassador[0];
+
+    if (!task.readyClaim) {
+      if (["level0", "level1", "level2"].includes(currentLevel) && participantCount >= config.minParticipants) {
+        updates.tasksAmbassador = [...userData.tasksAmbassador];
+        updates.tasksAmbassador[0] = {
+          ...task,
+          readyClaim: true,
+          total: participantCount,
+        };
+      } else if (currentLevel === "level3" && task.total < config.maxTotal && participantCount >= config.minParticipants) {
+        const newTotal = task.total + 1;
+        updates.tasksAmbassador = [...userData.tasksAmbassador];
+        updates.tasksAmbassador[0] = {
+          ...task,
+          total: newTotal,
+          readyClaim: newTotal >= config.maxTotal,
+        };
+      }
+    }
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await admin.firestore().collection("user").doc(userId).update(updates);
+  }
+}
+
+/**
+ * Processes an array in chunks to avoid overwhelming the system with concurrent operations
+ * @param {Array} array - The array to process
+ * @param {number} chunkSize - Size of each chunk to process concurrently
+ * @param {Function} processor - Function to process each item in the array
+ * @return {Promise<Array>} Promise that resolves to array of processed results
+ */
+async function processInChunks(array, chunkSize, processor) {
+  const results = [];
+  for (let i = 0; i < array.length; i += chunkSize) {
+    const chunk = array.slice(i, i + chunkSize);
+    console.log(chunk);
+    console.log("chunk");
+    const chunkResults = await Promise.all(chunk.map(processor));
+    results.push(...chunkResults);
+    console.log(results);
+    console.log("results");
+  }
+  return results;
+}
+
+/**
+ * Gets current date formatted as YYYY-MM-DD string
+ * @return {string} Formatted date string in YYYY-MM-DD format
+ */
+function getFormattedDate() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
