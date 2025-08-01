@@ -235,19 +235,28 @@ exports.sendNotificationByInterest = functions.firestore.document("event/{eventI
         const batch = admin.firestore().batch();
         usersSnapshot.forEach((doc) => {
           const userRef = doc.ref;
-          batch.update(userRef, {
-            notifications: admin.firestore.FieldValue.arrayUnion({
-              title: "Event Just for You!",
-              content: "We found an event that matches your interests. Don’t miss out—check it out now and see if it’s the perfect fit!",
-              notificationType: "1",
-              isRead: false,
-              date: Timestamp.now(),
-              image: eventData.photo,
-              eventId: snap.id,
-              eventHost: eventData.hostRef.id,
-              navigation: "eventdetail",
-            }),
-          });
+          const userData = doc.data();
+
+          const userGender = userData.gender;
+          const eventGenders = eventData.gender;
+
+          const genderMatches = eventGenders.includes("All") || eventGenders.includes(userGender);
+
+          if (eventData.hostRef.id != userRef.id && genderMatches) {
+            batch.update(userRef, {
+              notifications: admin.firestore.FieldValue.arrayUnion({
+                title: "Event Just for You!",
+                content: "We found an event that matches your interests. Don’t miss out—check it out now and see if it’s the perfect fit!",
+                notificationType: "1",
+                isRead: false,
+                date: Timestamp.now(),
+                image: eventData.photo,
+                eventId: snap.id,
+                eventHost: eventData.hostRef.id,
+                navigation: "eventdetail",
+              }),
+            });
+          }
         });
 
         await batch.commit();
@@ -261,77 +270,117 @@ exports.sendNotificationByInterest = functions.firestore.document("event/{eventI
   }
 });
 
-exports.sendNotificationInviteUser = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationInviteUsers = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
 
-  const {inviteUser, eventName, eventPhoto, eventId, guestId} = req.body;
+  const {inviteUser, eventName, eventPhoto, eventId, guestIds} = req.body;
 
-  if (!inviteUser || !eventName || !eventPhoto || !eventId || !guestId) {
+  if (!inviteUser || !eventName || !eventPhoto || !eventId || !guestIds || !Array.isArray(guestIds)) {
     return res.status(400).send({
       error: "bad-request",
-      message: "The inviteUser, eventName, eventPhoto, eventId and guestId of the notification are required",
+      message: "The inviteUser, eventName, eventPhoto, eventId and guestIds (array) are required",
     });
   }
 
-  const message = {
-    notification: {
-      title: "You've Got an Invite!",
-      body: `${inviteUser} just invited you to join the event ${eventName}! Ready to RSVP? Accept or decline—it’s your call!`,
-      image: eventPhoto,
-    },
-    data: {
-      notification: "2",
-      information: JSON.stringify({
-        eventId: eventId,
-      }),
-      image: eventPhoto,
-      date: new Date().toISOString(),
-    },
-    android: {
-      notification: {
-        sound: "default",
-        priority: "high",
-        channelId: "high_importance_channel",
-      },
-    },
-    apns: {
-      payload: {
-        aps: {
-          sound: "default",
-        },
-      },
-    },
-    topic: `${guestId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
-  };
-
-  try {
-    await admin.messaging().send(message);
-    console.log(`Notification successfully sent to the topic: ${guestId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
-
-    await admin.firestore().collection("user").doc(guestId).update({
-      notifications: FieldValue.arrayUnion({
-        title: "You've Got an Invite!",
-        content: `${inviteUser} just invited you to join the event ${eventName}! Ready to RSVP? Accept or decline—it’s your call!`,
-        notificationType: "2",
-        isRead: false,
-        date: Timestamp.now(),
-        image: eventPhoto,
-        eventId: eventId,
-        eventHost: "",
-        navigation: "myevents",
-      }),
+  if (guestIds.length === 0) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "guestIds array cannot be empty",
     });
+  }
 
-    console.log("Notifications successfully added to user documents.");
-    return res.status(200).send({message: "Notification sent successfully"});
-  } catch (error) {
-    console.error("Error sending sendNotificationInviteUser notification:", error);
+  const results = [];
+  const errors = [];
+
+  for (const guestId of guestIds) {
+    try {
+      const message = {
+        notification: {
+          title: "You've Got an Invite!",
+          body: `${inviteUser} just invited you to join the event ${eventName}! Ready to RSVP? Accept or decline—it's your call!`,
+          image: eventPhoto,
+        },
+        data: {
+          notification: "2",
+          information: JSON.stringify({
+            eventId: eventId,
+          }),
+          image: eventPhoto,
+          date: new Date().toISOString(),
+        },
+        android: {
+          notification: {
+            sound: "default",
+            priority: "high",
+            channelId: "high_importance_channel",
+          },
+        },
+        apns: {
+          payload: {
+            aps: {
+              sound: "default",
+            },
+          },
+        },
+        topic: `${guestId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+      };
+
+      await admin.messaging().send(message);
+      console.log(`Notification successfully sent to the topic: ${guestId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
+
+      await admin.firestore().collection("user").doc(guestId).update({
+        notifications: FieldValue.arrayUnion({
+          title: "You've Got an Invite!",
+          content: `${inviteUser} just invited you to join the event ${eventName}! Ready to RSVP? Accept or decline—it's your call!`,
+          notificationType: "2",
+          isRead: false,
+          date: Timestamp.now(),
+          image: eventPhoto,
+          eventId: eventId,
+          eventHost: "",
+          navigation: "myevents",
+        }),
+      });
+
+      results.push({
+        guestId: guestId,
+        status: "success",
+        message: "Notification sent successfully",
+      });
+    } catch (error) {
+      console.error(`Error sending notification to ${guestId}:`, error);
+      errors.push({
+        guestId: guestId,
+        status: "error",
+        message: error.message,
+      });
+    }
+  }
+
+  console.log(`Processed ${results.length} successful notifications and ${errors.length} errors.`);
+
+  if (errors.length === 0) {
+    return res.status(200).send({
+      message: "All notifications sent successfully",
+      successCount: results.length,
+      results: results,
+    });
+  } else if (results.length === 0) {
     return res.status(500).send({
       error: "internal",
-      message: "Error sending sendNotificationInviteUser notification",
-      details: error.message,
+      message: "Failed to send all notifications",
+      errorCount: errors.length,
+      errors: errors,
+    });
+  } else {
+    return res.status(207).send({
+      message: "Partially successful",
+      successCount: results.length,
+      errorCount: errors.length,
+      results: results,
+      errors: errors,
     });
   }
 });
@@ -398,19 +447,28 @@ exports.sendNotificationByState = functions.firestore.document("event/{eventId}"
         const batch = admin.firestore().batch();
         usersSnapshot.forEach((doc) => {
           const userRef = doc.ref;
-          batch.update(userRef, {
-            notifications: admin.firestore.FieldValue.arrayUnion({
-              title: "New Events Nearby!",
-              content: "New events just popped up near you! Dive in and see what's happening around town!",
-              notificationType: "3",
-              isRead: false,
-              date: Timestamp.now(),
-              image: eventData.photo,
-              eventId: snap.id,
-              eventHost: eventData.hostRef.id,
-              navigation: "eventdetail",
-            }),
-          });
+          const userData = doc.data();
+
+          const userGender = userData.gender;
+          const eventGenders = eventData.gender;
+
+          const genderMatches = eventGenders.includes("All") || eventGenders.includes(userGender);
+
+          if (eventData.hostRef.id != userRef.id && genderMatches) {
+            batch.update(userRef, {
+              notifications: admin.firestore.FieldValue.arrayUnion({
+                title: "New Events Nearby!",
+                content: "New events just popped up near you! Dive in and see what's happening around town!",
+                notificationType: "3",
+                isRead: false,
+                date: Timestamp.now(),
+                image: eventData.photo,
+                eventId: snap.id,
+                eventHost: eventData.hostRef.id,
+                navigation: "eventdetail",
+              }),
+            });
+          }
         });
 
         await batch.commit();
@@ -718,19 +776,28 @@ exports.sendNotificationLastMinutes = functions.firestore.document("event/{event
         const batch = admin.firestore().batch();
         usersSnapshot.forEach((doc) => {
           const userRef = doc.ref;
-          batch.update(userRef, {
-            notifications: admin.firestore.FieldValue.arrayUnion({
-              title: "Last-Minute Events",
-              content: "Last-minute events have just popped up. Interested in attending one?",
-              notificationType: "6",
-              isRead: false,
-              date: Timestamp.now(),
-              image: eventData.photo,
-              eventId: snap.id,
-              eventHost: eventData.hostRef.id,
-              navigation: "eventdetail",
-            }),
-          });
+          const userData = doc.data();
+
+          const userGender = userData.gender;
+          const eventGenders = eventData.gender;
+
+          const genderMatches = eventGenders.includes("All") || eventGenders.includes(userGender);
+
+          if (eventData.hostRef.id != userRef.id && genderMatches) {
+            batch.update(userRef, {
+              notifications: admin.firestore.FieldValue.arrayUnion({
+                title: "Last-Minute Events",
+                content: "Last-minute events have just popped up. Interested in attending one?",
+                notificationType: "6",
+                isRead: false,
+                date: Timestamp.now(),
+                image: eventData.photo,
+                eventId: snap.id,
+                eventHost: eventData.hostRef.id,
+                navigation: "eventdetail",
+              }),
+            });
+          }
         });
 
         await batch.commit();
@@ -2100,7 +2167,7 @@ exports.validatePhoneNumber = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.getUserData = functions.https.onCall(async (data, context) => {
+exports.getUserData = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   const documentId = data.documentId;
 
   console.log("Document ID:", documentId);
