@@ -2074,6 +2074,7 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
     batch.update(userRef, {
       gTokens: FieldValue.increment(gtokensTotal - referralProcessedCount),
       retentionGTokens: FieldValue.increment(isSelling ? -100 : 0),
+      badgesCreated: participants.length == 0 ? FieldValue.increment(0) : FieldValue.increment(1),
     });
     batchOperations += 1;
 
@@ -2690,19 +2691,24 @@ exports.countAmbassadorUsers = functions.https.onRequest(async (req, res) => {
 
     console.log(`Process completed for user ${userId}: Found ${count} users with ambassador level out of ${totalProcessed} processed`);
 
-    if (count >= 10) {
-      const updateSubTasksAmbassador = userData.subTasksAmbassador;
-      updateSubTasksAmbassador[1] = {
-        ...updateSubTasksAmbassador[1],
-        "readyClaim": true,
-        "isClaimed": true,
-        "lastClaimed": userData.serverDate,
-        "total": 10,
-      };
+    const updateSubTasksAmbassador = userData.subTasksAmbassador;
 
-      await admin.firestore().collection("user").doc(userId).update({
-        subTasksAmbassador: updateSubTasksAmbassador,
-      });
+    if (updateSubTasksAmbassador[1]["total"] != count) {
+      if (updateSubTasksAmbassador[1]["readyClaim"] == false && updateSubTasksAmbassador[1]["total"] < 10) {
+        if (count >= 10) {
+          updateSubTasksAmbassador[1] = {...updateSubTasksAmbassador[1], "readyClaim": true, "isClaimed": true, "lastClaimed": userData.serverDate, "total": count};
+
+          await admin.firestore().collection("user").doc(userId).update({
+            subTasksAmbassador: updateSubTasksAmbassador,
+          });
+        } else {
+          updateSubTasksAmbassador[1] = {...updateSubTasksAmbassador[1], "total": count};
+
+          await admin.firestore().collection("user").doc(userId).update({
+            subTasksAmbassador: updateSubTasksAmbassador,
+          });
+        }
+      }
     }
 
     return res.status(200).send({
@@ -2780,11 +2786,15 @@ async function updateAmbassadorTasks(userId, userData, participantCount) {
     const task = userData.subTasksAmbassador[0];
     if (!task.readyClaim && task.total < config.maxTotal && participantCount >= config.minParticipants) {
       const newTotal = task.total + 1;
+
+      const isMaxReached = newTotal >= config.maxTotal;
+
       updates.subTasksAmbassador = [...userData.subTasksAmbassador];
       updates.subTasksAmbassador[0] = {
         ...task,
         total: newTotal,
-        readyClaim: newTotal >= config.maxTotal,
+        readyClaim: isMaxReached,
+        isClaimed: isMaxReached,
       };
     }
   } else if (userData.tasksAmbassador.length > 0) {
