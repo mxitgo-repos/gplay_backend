@@ -99,23 +99,27 @@ exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
     return res.status(405).send("Method not allowed");
   }
 
-  const {startDate, endDate} = req.body;
-
-  if (!startDate || !endDate) {
-    return res.status(400).send({
-      error: "bad-request",
-      message: "The start date and end date are required",
-    });
-  }
-
   try {
     const users = await admin.auth().listUsers();
-    const start = new Date(startDate).getTime();
-    const end = new Date(endDate).getTime();
+    const adminsSnapshot = await admin.firestore().collection("admins").get();
+
+    const adminIds = adminsSnapshot.docs.map((doc) => doc.id);
+
+    const now = new Date();
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(now);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const start = startOfDay.getTime();
+    const end = endOfDay.getTime();
 
     const activeUsers = users.users.filter((user) => {
       const lastLogin = user.metadata.lastSignInTime ? new Date(user.metadata.lastSignInTime).getTime() : 0;
-      return lastLogin >= start && lastLogin <= end;
+      const isActive = lastLogin >= start && lastLogin <= end;
+      const isAdmin = adminIds.includes(user.uid);
+
+      return isActive && !isAdmin;
     });
 
     return res.status(200).send({activeUsers});
