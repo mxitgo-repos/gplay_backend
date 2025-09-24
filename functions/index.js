@@ -18,6 +18,54 @@ const LEVEL_CONFIG = {
   level4: {minParticipants: 25, taskIndex: 0, maxTotal: 5, isSubTask: true},
 };
 
+exports.getAllUsersAuthInfo = functions.https.onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "POST");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "POST");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    res.set("Access-Control-Max-Age", "3600");
+    return res.status(204).send("");
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  try {
+    const allUsersResult = await admin.auth().listUsers();
+    const adminsSnapshot = await admin.firestore().collection("admins").get();
+    const adminIds = adminsSnapshot.docs.map((doc) => doc.id);
+
+    const regularUsers = allUsersResult.users.filter((user) => !adminIds.includes(user.uid));
+
+    const usersAuthInfo = regularUsers.map((user) => ({
+      uid: user.uid,
+      email: user.email,
+      emailVerified: user.emailVerified,
+      disabled: user.disabled,
+      creationTime: user.metadata.creationTime,
+      lastSignInTime: user.metadata.lastSignInTime,
+      lastRefreshTime: user.metadata.lastRefreshTime,
+    }));
+
+    return res.status(200).send({
+      success: true,
+      users: usersAuthInfo,
+      totalUsers: usersAuthInfo.length,
+    });
+  } catch (error) {
+    console.error("Error getting all users auth info:", error);
+    return res.status(500).send({
+      error: "internal",
+      message: "Error getting all users authentication information",
+      details: error.message,
+    });
+  }
+});
+
 exports.getUsersAuthInfo = functions.https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
