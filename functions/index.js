@@ -18,6 +18,74 @@ const LEVEL_CONFIG = {
   level4: {minParticipants: 25, taskIndex: 0, maxTotal: 5, isSubTask: true},
 };
 
+exports.getUsersAuthInfo = functions.https.onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "POST");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "POST");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    res.set("Access-Control-Max-Age", "3600");
+    return res.status(204).send("");
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const {userIds} = req.body;
+
+  if (!userIds || !Array.isArray(userIds)) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "userIds array is required",
+    });
+  }
+
+  try {
+    const usersAuthInfo = [];
+    const batchSize = 100;
+    for (let i = 0; i < userIds.length; i += batchSize) {
+      const batch = userIds.slice(i, i + batchSize);
+      const batchPromises = batch.map(async (uid) => {
+        try {
+          const userRecord = await admin.auth().getUser(uid);
+          return {
+            uid: userRecord.uid,
+            email: userRecord.email,
+            emailVerified: userRecord.emailVerified,
+            disabled: userRecord.disabled,
+            creationTime: userRecord.metadata.creationTime,
+            lastSignInTime: userRecord.metadata.lastSignInTime,
+            lastRefreshTime: userRecord.metadata.lastRefreshTime,
+          };
+        } catch (error) {
+          console.log(`User ${uid} not found in Auth:`, error.message);
+          return null;
+        }
+      });
+      const batchResults = await Promise.all(batchPromises);
+      usersAuthInfo.push(...batchResults.filter((user) => user !== null));
+    }
+
+    return res.status(200).send({
+      success: true,
+      users: usersAuthInfo,
+      totalFound: usersAuthInfo.length,
+      totalRequested: userIds.length,
+    });
+  } catch (error) {
+    console.error("Error getting users auth info:", error);
+    return res.status(500).send({
+      error: "internal",
+      message: "Error getting users authentication information",
+      details: error.message,
+    });
+  }
+});
+
+
 exports.checkEmail = functions.https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
