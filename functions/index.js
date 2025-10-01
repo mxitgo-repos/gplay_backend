@@ -253,9 +253,9 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
     return res.status(405).send("Method not allowed");
   }
 
-  const {userId, title, content, notificationType} = req.body;
+  const {userId, title, content, notificationType, titleEsp, contentEsp} = req.body;
 
-  if (!userId || !title || !content || !notificationType) {
+  if (!userId || !title || !content || !notificationType || !titleEsp || !contentEsp) {
     return res.status(400).send({
       error: "bad-request",
       message: "The userId, title, content and notificationType of the pust notification user are required",
@@ -264,7 +264,9 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
 
   const notificationData = {
     title,
+    titleEsp,
     content,
+    contentEsp,
     notificationType,
     isRead: false,
     date: Timestamp.now(),
@@ -366,7 +368,9 @@ exports.sendNotificationByInterest = functions.firestore.document("event/{eventI
             batch.update(userRef, {
               notifications: admin.firestore.FieldValue.arrayUnion({
                 title: "Event Just for You!",
+                titleEsp: "¡Evento Solo Para Ti!",
                 content: "We found an event that matches your interests. Don’t miss out—check it out now and see if it’s the perfect fit!",
+                contentEsp: "Encontramos un evento que coincide con tus intereses. ¡No te lo pierdas, échale un vistazo ahora y mira si es perfecto para ti!",
                 notificationType: "1",
                 isRead: false,
                 date: Timestamp.now(),
@@ -453,7 +457,9 @@ exports.sendNotificationInviteUsers = functions.runWith({memory: "1GB"}).https.o
       await admin.firestore().collection("user").doc(guestId).update({
         notifications: FieldValue.arrayUnion({
           title: "You've Got an Invite!",
+          titleEsp: "¡Tienes una Invitación!",
           content: `${inviteUser} just invited you to join the event ${eventName}! Ready to RSVP? Accept or decline—it's your call!`,
+          contentEsp: `¡${inviteUser} te acaba de invitar a unirte al evento ${eventName}! ¿Listo para confirmar? Acepta o rechaza, ¡tú decides!`,
           notificationType: "2",
           isRead: false,
           date: Timestamp.now(),
@@ -578,7 +584,9 @@ exports.sendNotificationByState = functions.firestore.document("event/{eventId}"
             batch.update(userRef, {
               notifications: admin.firestore.FieldValue.arrayUnion({
                 title: "New Events Nearby!",
+                titleEsp: "¡Nuevos Eventos Cerca!",
                 content: "New events just popped up near you! Dive in and see what's happening around town!",
+                contentEsp: "¡Acaban de aparecer nuevos eventos cerca de ti! Descubre que está pasando en la ciudad",
                 notificationType: "3",
                 isRead: false,
                 date: Timestamp.now(),
@@ -690,7 +698,9 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * *")
             batch.update(userRef, {
               notifications: admin.firestore.FieldValue.arrayUnion({
                 title: "Event Reminder!",
+                titleEsp: "¡Recordatorio de Evento!",
                 content: `Your event '${eventData.name}' is coming up soon! Are you ready for it?`,
+                contentEsp: `Tu evento '${eventData.name}' se acerca! ¿Estás listo?`,
                 notificationType: "4",
                 isRead: false,
                 date: Timestamp.now(),
@@ -793,7 +803,9 @@ exports.sendNotificationEventFinish = functions.https.onRequest(async (req, res)
         batch.update(userRef, {
           notifications: admin.firestore.FieldValue.arrayUnion({
             title: "Event Feedback",
+            titleEsp: "Opinión del Evento",
             content: "The event has ended. Share your thoughts by leaving a review for others!",
+            contentEsp: "El evento ha terminado. ¡Comparte tus opiniones dejando una reseña!",
             notificationType: "5",
             isRead: false,
             date: Timestamp.now(),
@@ -907,7 +919,9 @@ exports.sendNotificationLastMinutes = functions.firestore.document("event/{event
             batch.update(userRef, {
               notifications: admin.firestore.FieldValue.arrayUnion({
                 title: "Last-Minute Events",
+                titleEsp: "Eventos de Último Momento",
                 content: "Last-minute events have just popped up. Interested in attending one?",
+                contentEsp: "Acaban de aparecer eventos de último momento. ¿Te interesa asistir?",
                 notificationType: "6",
                 isRead: false,
                 date: Timestamp.now(),
@@ -1023,7 +1037,9 @@ exports.sendNotificationEventsReminderFavorite = functions.pubsub.schedule("0 12
             batch.update(userRef, {
               notifications: admin.firestore.FieldValue.arrayUnion({
                 title: "Favorite Event Reminder",
+                titleEsp: "Recordatorio de Evento Favorito",
                 content: `The event '${eventData.name}' you favorited is happening in ${daysLeft} days. Are you going to join?`,
+                contentEsp: `El evento '${eventData.name}' que marcaste como favorito será en ${daysLeft} días. ¿Asistirás?`,
                 notificationType: "7",
                 isRead: false,
                 date: Timestamp.now(),
@@ -1103,7 +1119,9 @@ exports.sendNotificationNewMessage = functions.https.onRequest(async (req, res) 
     await admin.firestore().collection("user").doc(receiverId).update({
       notifications: FieldValue.arrayUnion({
         title: "New Message",
+        titleEsp: "Nuevo Mensaje",
         content: `${userName} just sent you a message. Check it out!`,
+        contentEsp: `¡${userName} te acaba de enviar un mensaje. Échale un vistazo!`,
         notificationType: "8",
         isRead: false,
         date: Timestamp.now(),
@@ -1177,8 +1195,10 @@ exports.sendNotificationNewRequest = functions.https.onRequest(async (req, res) 
 
     await admin.firestore().collection("user").doc(receiverId).update({
       notifications: FieldValue.arrayUnion({
-        title: "New Friend Alert!",
-        content: `${userName} wants to be your buddy! Ready to connect? Accept their friend request and start the fun!`,
+        title: "New Friendship Alert",
+        titleEsp: "¡Nueva Alerta de Amistad!",
+        content: `${userName} wants to be your friend! Accept the request and start chatting right away`,
+        contentEsp: `¡${userName} quiere ser tu amigo! Acepta su solicitud y empieza a chatear de inmediato`,
         notificationType: "16",
         isRead: false,
         date: Timestamp.now(),
@@ -1261,7 +1281,9 @@ exports.sendNotificationRateApp = functions.pubsub.schedule("0 12 * * 1").onRun(
         batch.update(userRef, {
           notifications: admin.firestore.FieldValue.arrayUnion({
             title: "Rate the App",
-            content: "We’d love your feedback! Take a moment to rate our app.",
+            titleEsp: "Califica la App",
+            content: "We’d love your feedback! Take a moment to rate our app",
+            contentEsp: "¡Nos encantaría conocer tu opinión! Tómate un momento para calificar nuestra aplicación",
             notificationType: "9",
             isRead: false,
             date: Timestamp.now(),
@@ -1354,7 +1376,9 @@ exports.sendNotificationCreateEvent = functions.pubsub.schedule("0 12 * * 1").on
         batch.update(userRef, {
           notifications: admin.firestore.FieldValue.arrayUnion({
             title: "Create an Event",
+            titleEsp: "Crea un Evento",
             content: `Thinking of creating an event for ${selectedName} interest? Get started now!`,
+            contentEsp: `¿Tienes ganas de organizar un evento genial sobre $ {selectedName}? ¡No esperes más! Empieza a crearlo`,
             notificationType: "10",
             isRead: false,
             date: Timestamp.now(),
@@ -1508,7 +1532,9 @@ exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res
     await admin.firestore().collection("user").doc(userId).update({
       notifications: FieldValue.arrayUnion({
         title: "User Event Question!",
+        titleEsp: "Atención! Tienes una pregunta",
         content: "Someone has a question about your event. Head over to check it out!",
+        contentEsp: "Alguien hizo una pregunta sobre tu evento. ¡Entra ahora para responderla!",
         notificationType: "13",
         isRead: false,
         date: Timestamp.now(),
@@ -1546,9 +1572,9 @@ exports.sendNotificationAdmin = functions.https.onRequest(async (req, res) => {
     return res.status(405).send("Method not allowed");
   }
 
-  const {titleMessage, bodyMessage, imageMessage, urlMessage} = req.body;
+  const {titleMessage, bodyMessage, imageMessage, urlMessage, titleMessageEsp, bodyMessageEsp} = req.body;
 
-  if (!titleMessage || !bodyMessage) {
+  if (!titleMessage || !bodyMessage || !titleMessageEsp || !bodyMessageEsp) {
     return res.status(400).send({
       error: "bad-request",
       message: "The titleMessage and bodyMessage of the notification are required",
@@ -1611,7 +1637,9 @@ exports.sendNotificationAdmin = functions.https.onRequest(async (req, res) => {
         batch.update(userRef, {
           notifications: admin.firestore.FieldValue.arrayUnion({
             title: titleMessage,
+            titleEsp: titleMessageEsp,
             content: bodyMessage,
+            contentEsp: bodyMessageEsp,
             notificationType: "14",
             isRead: false,
             date: Timestamp.now(),
@@ -1900,9 +1928,9 @@ exports.sendNotificationAdminStrikes = functions.https.onRequest(async (req, res
     return res.status(405).send("Method not allowed");
   }
 
-  const {titleMessage, bodyMessage, imageMessage, urlMessage, userId} = req.body;
+  const {titleMessage, bodyMessage, imageMessage, urlMessage, userId, titleMessageEsp, bodyMessageEsp} = req.body;
 
-  if (!titleMessage || !bodyMessage) {
+  if (!titleMessage || !bodyMessage || !titleMessageEsp || !bodyMessageEsp) {
     return res.status(400).send({
       error: "bad-request",
       message: "The titleMessage and bodyMessage of the notification are required",
@@ -1944,7 +1972,9 @@ exports.sendNotificationAdminStrikes = functions.https.onRequest(async (req, res
     await admin.firestore().collection("user").doc(userId).update({
       notifications: FieldValue.arrayUnion({
         title: titleMessage,
+        titleEsp: titleMessageEsp,
         content: bodyMessage,
+        contentEsp: bodyMessageEsp,
         notificationType: "15",
         isRead: false,
         date: Timestamp.now(),
@@ -2641,9 +2671,9 @@ exports.sendNotificationSendGift = functions.https.onRequest(async (req, res) =>
     return res.status(405).send("Method not allowed");
   }
 
-  const {titleMessage, bodyMessage, imageMessage, urlMessage, userId} = req.body;
+  const {titleMessage, bodyMessage, imageMessage, urlMessage, userId, titleMessageEsp, bodyMessageEsp} = req.body;
 
-  if (!titleMessage || !bodyMessage) {
+  if (!titleMessage || !bodyMessage || !titleMessageEsp || !bodyMessageEsp) {
     return res.status(400).send({
       error: "bad-request",
       message: "The titleMessage and bodyMessage of the notification are required",
@@ -2685,7 +2715,9 @@ exports.sendNotificationSendGift = functions.https.onRequest(async (req, res) =>
     await admin.firestore().collection("user").doc(userId).update({
       notifications: FieldValue.arrayUnion({
         title: titleMessage,
+        titleEsp: titleMessageEsp,
         content: bodyMessage,
+        contentEsp: bodyMessageEsp,
         notificationType: "17",
         isRead: false,
         date: Timestamp.now(),
