@@ -253,9 +253,9 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
     return res.status(405).send("Method not allowed");
   }
 
-  const {userId, title, content, notificationType, titleEsp, contentEsp} = req.body;
+  const {userId, title, content, notificationType, titleMessageEsp, bodyMessageEsp} = req.body;
 
-  if (!userId || !title || !content || !notificationType || !titleEsp || !contentEsp) {
+  if (!userId || !title || !content || !notificationType || !titleMessageEsp || !bodyMessageEsp) {
     return res.status(400).send({
       error: "bad-request",
       message: "The userId, title, content and notificationType of the pust notification user are required",
@@ -264,9 +264,9 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
 
   const notificationData = {
     title,
-    titleEsp,
+    titleEsp: titleMessageEsp,
     content,
-    contentEsp,
+    contentEsp: bodyMessageEsp,
     notificationType,
     isRead: false,
     date: Timestamp.now(),
