@@ -2739,7 +2739,7 @@ exports.sendNotificationSendGift = functions.https.onRequest(async (req, res) =>
   }
 });
 
-exports.countAmbassadorUsers = functions.https.onRequest(async (req, res) => {
+exports.countAmbassadorUsers = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
