@@ -1311,7 +1311,11 @@ exports.sendNotificationCreateEvent = functions.pubsub.schedule("0 12 * * 1").on
 
   const namesList = [];
   eventInterestsSnapshot.forEach((doc) => {
-    namesList.push(doc.data().name);
+    const data = doc.data();
+    namesList.push({
+      name: data.name,
+      name_esp: data.name_esp,
+    });
   });
 
   const randomIndex = Math.floor(Math.random() * namesList.length);
@@ -1320,7 +1324,7 @@ exports.sendNotificationCreateEvent = functions.pubsub.schedule("0 12 * * 1").on
   const message = {
     notification: {
       title: "Create an Event",
-      body: `Thinking of creating an event for ${selectedName} interest? Get started now!`,
+      body: `Thinking of creating an event for ${selectedName.name} interest? Get started now!`,
       image: "",
     },
     data: {
@@ -1377,8 +1381,8 @@ exports.sendNotificationCreateEvent = functions.pubsub.schedule("0 12 * * 1").on
           notifications: admin.firestore.FieldValue.arrayUnion({
             title: "Create an Event",
             titleEsp: "Crea un Evento",
-            content: `Thinking of creating an event for ${selectedName} interest? Get started now!`,
-            contentEsp: `¿Tienes ganas de organizar un evento genial sobre ${selectedName}? ¡No esperes más! Empieza a crearlo`,
+            content: `Thinking of creating an event for ${selectedName.name} interest? Get started now!`,
+            contentEsp: `¿Tienes ganas de organizar un evento genial sobre ${selectedName.name_esp}? ¡No esperes más! Empieza a crearlo`,
             notificationType: "10",
             isRead: false,
             date: Timestamp.now(),
