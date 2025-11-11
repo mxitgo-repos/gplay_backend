@@ -1797,8 +1797,10 @@ exports.createTransfer = functions.https.onCall(async (data, context) => {
       currency: "mxn",
       destination: data.accountId,
     });
+    console.log("Transfer created:", transfer);
     return {transferId: transfer.id};
   } catch (error) {
+    console.log("Transfer error:", error);
     throw new functions.https.HttpsError("internal", error.message);
   }
 });
