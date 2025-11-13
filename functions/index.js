@@ -216,30 +216,57 @@ exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
   }
 
   try {
-    const users = await admin.auth().listUsers();
-    const adminsSnapshot = await admin.firestore().collection("admins").get();
+    const {startDate, endDate} = req.body;
 
+    let startOfDay;
+    let endOfDay;
+
+    if (startDate && endDate) {
+      startOfDay = new Date(startDate);
+      endOfDay = new Date(endDate);
+    } else {
+      const now = new Date();
+      startOfDay = new Date(now);
+      startOfDay.setHours(0, 0, 0, 0);
+      endOfDay = new Date(now);
+      endOfDay.setHours(23, 59, 59, 999);
+    }
+
+    if (isNaN(startOfDay.getTime()) || isNaN(endOfDay.getTime())) {
+      return res.status(400).send({
+        error: "invalid_dates",
+        message: "Invalid date format",
+      });
+    }
+
+    console.log(`Getting users with lastActivity between ${startOfDay.toISOString()} and ${endOfDay.toISOString()}`);
+
+    const adminsSnapshot = await admin.firestore().collection("admins").get();
     const adminIds = adminsSnapshot.docs.map((doc) => doc.id);
 
-    const now = new Date();
-    const startOfDay = new Date(now);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(now);
-    endOfDay.setHours(23, 59, 59, 999);
+    const usersSnapshot = await admin
+        .firestore()
+        .collection("user")
+        .where("lastActivity", ">=", admin.firestore.Timestamp.fromDate(startOfDay))
+        .where("lastActivity", "<=", admin.firestore.Timestamp.fromDate(endOfDay))
+        .get();
 
-    const start = startOfDay.getTime();
-    const end = endOfDay.getTime();
+    const activeUsers = usersSnapshot.docs
+        .filter((doc) => !adminIds.includes(doc.id))
+        .map((doc) => ({
+          uid: doc.id,
+          ...doc.data(),
+        }));
 
-    const activeUsers = users.users.filter((user) => {
-      const lastLogin = user.metadata.lastSignInTime ? new Date(user.metadata.lastSignInTime).getTime() : 0;
-      const isActive = lastLogin >= start && lastLogin <= end;
-      const isAdmin = adminIds.includes(user.uid);
-
-      return isActive && !isAdmin;
+    return res.status(200).send({
+      activeUsers,
+      dateRange: {
+        start: startOfDay.toISOString(),
+        end: endOfDay.toISOString(),
+      },
     });
-
-    return res.status(200).send({activeUsers});
   } catch (error) {
+    console.error("Error getting users:", error);
     return res.status(500).send({
       error: "internal",
       message: "Error getting users",
