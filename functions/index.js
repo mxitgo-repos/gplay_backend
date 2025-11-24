@@ -2916,6 +2916,69 @@ exports.countAmbassadorUsers = functions.runWith({memory: "1GB"}).https.onReques
   }
 });
 
+exports.replenishFreeChats = functions.pubsub.schedule("0 0 * * *").onRun(async () => {
+  console.log("Starting replenishFreeChats function");
+
+  try {
+    const usersRef = admin.firestore().collection("user");
+    const batchSize = 500;
+    let lastDoc = null;
+    let hasMoreDocuments = true;
+    let totalProcessed = 0;
+    let totalUpdated = 0;
+
+    while (hasMoreDocuments) {
+      let query = usersRef.limit(batchSize);
+      if (lastDoc) {
+        query = query.startAfter(lastDoc);
+      }
+
+      const usersSnapshot = await query.get();
+      if (usersSnapshot.empty) {
+        hasMoreDocuments = false;
+        break;
+      }
+
+      const batch = admin.firestore().batch();
+      let batchUpdateCount = 0;
+
+      usersSnapshot.forEach((doc) => {
+        const userData = doc.data();
+        const currentFreeChats = userData?.pack?.chats?.free || 0;
+        const currentPaidChats = userData?.pack?.chats?.paid || 0;
+
+        if (currentFreeChats < 5) {
+          const newFreeChats = 5;
+          const newTotal = newFreeChats + currentPaidChats;
+
+          batch.update(doc.ref, {
+            "pack.chats.free": newFreeChats,
+            "pack.chats.total": newTotal,
+          });
+          batchUpdateCount++;
+        }
+      });
+
+      if (batchUpdateCount > 0) {
+        await batch.commit();
+        totalUpdated += batchUpdateCount;
+        console.log(`Batch committed: ${batchUpdateCount} users updated`);
+      }
+
+      totalProcessed += usersSnapshot.size;
+      lastDoc = usersSnapshot.docs[usersSnapshot.docs.length - 1];
+
+      console.log(`Processed ${totalProcessed} users so far, updated ${totalUpdated} users`);
+    }
+
+    console.log(`Replenish free chats completed. Total processed: ${totalProcessed}, Total updated: ${totalUpdated}`);
+    return null;
+  } catch (error) {
+    console.error("Error in replenishFreeChats:", error);
+    throw error;
+  }
+});
+
 /**
  * Actualiza el ranking de embajadores para un nivel específico
  * @param {string} level - El nivel de embajador (level1, level2, level3, level4)
