@@ -9,7 +9,7 @@ admin.initializeApp();
 const {FieldValue, Timestamp} = admin.firestore;
 
 const BATCH_SIZE = 500;
-const CONCURRENT_LIMIT = 10;
+// const CONCURRENT_LIMIT = 10;
 const LEVEL_CONFIG = {
   level0: {minParticipants: 3, taskIndex: 0},
   level1: {minParticipants: 3, taskIndex: 0},
@@ -2136,9 +2136,14 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
     });
   }
 
+  // const {
+  //   eventId, participants, userId, tokensEvent, isSelling,
+  //   usersPaid, price, feeOption,
+  // } = body;
+
   const {
     eventId, participants, userId, tokensEvent, isSelling,
-    usersPaid, price, feeOption,
+    usersPaid,
   } = body;
 
   if (!Array.isArray(usersPaid) || !Array.isArray(participants)) {
@@ -2153,89 +2158,89 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
   let batchOperations = 0;
 
   try {
-    const dateFormatted = getFormattedDate();
-    const gTokensPercentage = price * (feeOption / 100);
-    let referralProcessedCount = 0;
+    // const dateFormatted = getFormattedDate();
+    // const gTokensPercentage = price * (feeOption / 100);
+    // let referralProcessedCount = 0;
 
-    const processReferralUser = async (paidUserId) => {
-      try {
-        const userDoc = await db.collection("user").doc(paidUserId).get();
+    // const processReferralUser = async (paidUserId) => {
+    //   try {
+    //     const userDoc = await db.collection("user").doc(paidUserId).get();
 
-        if (!userDoc.exists) {
-          console.log(`User ${paidUserId} does not exist`);
-          return 0;
-        }
+    //     if (!userDoc.exists) {
+    //       console.log(`User ${paidUserId} does not exist`);
+    //       return 0;
+    //     }
 
-        const userData = userDoc.data();
-        const referredBy = userData.referredBy;
+    //     const userData = userDoc.data();
+    //     const referredBy = userData.referredBy;
 
-        if (!referredBy) return 0;
+    //     if (!referredBy) return 0;
 
-        const ref1Doc = await db.collection("user").doc(referredBy).get();
-        if (!ref1Doc.exists) return 0;
+    //     const ref1Doc = await db.collection("user").doc(referredBy).get();
+    //     if (!ref1Doc.exists) return 0;
 
-        console.log(`User ${referredBy} receives ${gTokensPercentage} tokens`);
+    //     console.log(`User ${referredBy} receives ${gTokensPercentage} tokens`);
 
-        if (batchOperations >= BATCH_SIZE - 10) {
-          await batch.commit();
-          batch = db.batch();
-          batchOperations = 0;
-        }
+    //     if (batchOperations >= BATCH_SIZE - 10) {
+    //       await batch.commit();
+    //       batch = db.batch();
+    //       batchOperations = 0;
+    //     }
 
-        const userRef = db.collection("user").doc(referredBy);
-        const level1Ref = userRef.collection("level1").doc(paidUserId);
-        const earningsRef = userRef.collection("earningsLevel1").doc(dateFormatted);
-        const mlmEarningsRef = db.collection("mlmEarnings").doc(dateFormatted);
-        const mlmTrackingRef = db.collection("mlmTracking").doc(paidUserId);
+    //     const userRef = db.collection("user").doc(referredBy);
+    //     const level1Ref = userRef.collection("level1").doc(paidUserId);
+    //     const earningsRef = userRef.collection("earningsLevel1").doc(dateFormatted);
+    //     const mlmEarningsRef = db.collection("mlmEarnings").doc(dateFormatted);
+    //     const mlmTrackingRef = db.collection("mlmTracking").doc(paidUserId);
 
-        batch.update(userRef, {
-          "earningsReferral.level1": FieldValue.increment(gTokensPercentage),
-          "earningsReferral.total": FieldValue.increment(gTokensPercentage),
-          "gTokens": FieldValue.increment(gTokensPercentage),
-          "transactionsReferral": FieldValue.arrayUnion({
-            "date": dateFormatted,
-            "amount": gTokensPercentage,
-            "type": "ticket_purchase",
-            "event": eventId,
-          }),
-        });
+    //     batch.update(userRef, {
+    //       "earningsReferral.level1": FieldValue.increment(gTokensPercentage),
+    //       "earningsReferral.total": FieldValue.increment(gTokensPercentage),
+    //       "gTokens": FieldValue.increment(gTokensPercentage),
+    //       "transactionsReferral": FieldValue.arrayUnion({
+    //         "date": dateFormatted,
+    //         "amount": gTokensPercentage,
+    //         "type": "ticket_purchase",
+    //         "event": eventId,
+    //       }),
+    //     });
 
-        batch.set(level1Ref, {
-          "amount": gTokensPercentage,
-          "userId": paidUserId,
-          "lastMove": FieldValue.serverTimestamp(),
-        }, {merge: true});
+    //     batch.set(level1Ref, {
+    //       "amount": gTokensPercentage,
+    //       "userId": paidUserId,
+    //       "lastMove": FieldValue.serverTimestamp(),
+    //     }, {merge: true});
 
-        batch.set(earningsRef, {
-          "earnings": FieldValue.increment(gTokensPercentage),
-        }, {merge: true});
+    //     batch.set(earningsRef, {
+    //       "earnings": FieldValue.increment(gTokensPercentage),
+    //     }, {merge: true});
 
-        batch.set(mlmEarningsRef, {
-          "earnings": FieldValue.increment(gTokensPercentage),
-          "dateEarnings": FieldValue.serverTimestamp(),
-        }, {merge: true});
+    //     batch.set(mlmEarningsRef, {
+    //       "earnings": FieldValue.increment(gTokensPercentage),
+    //       "dateEarnings": FieldValue.serverTimestamp(),
+    //     }, {merge: true});
 
-        batch.set(mlmTrackingRef, {
-          "lastMove": FieldValue.serverTimestamp(),
-          "level": 1,
-        }, {merge: true});
+    //     batch.set(mlmTrackingRef, {
+    //       "lastMove": FieldValue.serverTimestamp(),
+    //       "level": 1,
+    //     }, {merge: true});
 
-        batchOperations += 5;
-        return gTokensPercentage;
-      } catch (error) {
-        console.error(`Error processing user ${paidUserId}:`, error.message);
-        return 0;
-      }
-    };
+    //     batchOperations += 5;
+    //     return gTokensPercentage;
+    //   } catch (error) {
+    //     console.error(`Error processing user ${paidUserId}:`, error.message);
+    //     return 0;
+    //   }
+    // };
 
-    console.log(`Processing ${usersPaid.length} referral users`);
-    const referralResults = await processInChunks(
-        usersPaid,
-        CONCURRENT_LIMIT,
-        processReferralUser,
-    );
+    // console.log(`Processing ${usersPaid.length} referral users`);
+    // const referralResults = await processInChunks(
+    //     usersPaid,
+    //     CONCURRENT_LIMIT,
+    //     processReferralUser,
+    // );
 
-    referralProcessedCount = referralResults.reduce((sum, amount) => sum + amount, 0);
+    // referralProcessedCount = referralResults.reduce((sum, amount) => sum + amount, 0);
 
     if (batchOperations >= BATCH_SIZE - 5) {
       await batch.commit();
@@ -3017,25 +3022,25 @@ async function updateAmbassadorTasks(userId, userData, participantCount) {
  * @param {Function} processor - Function to process each item in the array
  * @return {Promise<Array>} Promise that resolves to array of processed results
  */
-async function processInChunks(array, chunkSize, processor) {
-  const results = [];
-  for (let i = 0; i < array.length; i += chunkSize) {
-    const chunk = array.slice(i, i + chunkSize);
-    console.log(chunk);
-    console.log("chunk");
-    const chunkResults = await Promise.all(chunk.map(processor));
-    results.push(...chunkResults);
-    console.log(results);
-    console.log("results");
-  }
-  return results;
-}
+// async function processInChunks(array, chunkSize, processor) {
+//   const results = [];
+//   for (let i = 0; i < array.length; i += chunkSize) {
+//     const chunk = array.slice(i, i + chunkSize);
+//     console.log(chunk);
+//     console.log("chunk");
+//     const chunkResults = await Promise.all(chunk.map(processor));
+//     results.push(...chunkResults);
+//     console.log(results);
+//     console.log("results");
+//   }
+//   return results;
+// }
 
 /**
  * Gets current date formatted as YYYY-MM-DD string
  * @return {string} Formatted date string in YYYY-MM-DD format
  */
-function getFormattedDate() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
+// function getFormattedDate() {
+//   const now = new Date();
+//   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+// }
