@@ -133,7 +133,6 @@ exports.getUsersAuthInfo = functions.https.onRequest(async (req, res) => {
   }
 });
 
-
 exports.checkEmail = functions.https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
@@ -2976,6 +2975,83 @@ exports.replenishFreeChats = functions.pubsub.schedule("0 0 * * *").onRun(async 
   } catch (error) {
     console.error("Error in replenishFreeChats:", error);
     throw error;
+  }
+});
+
+exports.sendNotificationRewardEarned = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const {userId, reward, taskName} = req.body;
+
+  if (!userId || !reward || !taskName) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The userId, reward and taskName are required",
+    });
+  }
+
+  const message = {
+    notification: {
+      title: "Reward Earned!",
+      body: `Congratulations! You've earned ${reward} G-Tokens reward for completing '${taskName}' task`,
+    },
+    data: {
+      notification: "18",
+      information: JSON.stringify({
+        reward: reward,
+        taskName: taskName,
+      }),
+      image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2FG-Tokens_gray.png?alt=media&token=81bff579-3c7e-4198-aa19-39b496b55d19",
+      date: new Date().toISOString(),
+    },
+    android: {
+      notification: {
+        sound: "default",
+        priority: "high",
+        channelId: "high_importance_channel",
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+    topic: `${userId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+  };
+
+  try {
+    await admin.messaging().send(message);
+    console.log(`Notification successfully sent to the topic: ${userId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
+
+    await admin.firestore().collection("user").doc(userId).update({
+      notifications: FieldValue.arrayUnion({
+        title: "Reward Earned!",
+        titleEsp: "¡Recompensa Ganada!",
+        content: `Congratulations! You've earned ${reward} G-Tokens reward for completing '${taskName}' task`,
+        contentEsp: `¡Felicidades! Has ganado ${reward} G-Tokens de recompensa por completar la tarea '${taskName}'`,
+        notificationType: "18",
+        isRead: false,
+        date: Timestamp.now(),
+        image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2FG-Tokens_gray.png?alt=media&token=81bff579-3c7e-4198-aa19-39b496b55d19",
+        eventId: "",
+        eventHost: "",
+        navigation: "rewards",
+      }),
+    });
+
+    console.log("Notification successfully added to user document.");
+    return res.status(200).send({message: "Notification sent successfully"});
+  } catch (error) {
+    console.error("Error sending sendNotificationRewardEarned notification:", error);
+    return res.status(500).send({
+      error: "internal",
+      message: "Error sending sendNotificationRewardEarned notification",
+      details: error.message,
+    });
   }
 });
 
