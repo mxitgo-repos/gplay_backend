@@ -2978,6 +2978,177 @@ exports.replenishFreeChats = functions.pubsub.schedule("0 0 * * *").onRun(async 
   }
 });
 
+exports.sendNotificationProfileVerification = functions.pubsub.schedule("0 12 * * 1").onRun(async () => {
+  console.log("Starting sendNotificationProfileVerification function");
+
+  try {
+    const usersRef = admin.firestore().collection("user").where("kyc", "==", false);
+    const batchSize = 500;
+    let lastDoc = null;
+    let hasMoreDocuments = true;
+    let totalProcessed = 0;
+    let totalNotified = 0;
+
+    while (hasMoreDocuments) {
+      let query = usersRef.limit(batchSize);
+      if (lastDoc) {
+        query = query.startAfter(lastDoc);
+      }
+
+      const usersSnapshot = await query.get();
+      if (usersSnapshot.empty) {
+        hasMoreDocuments = false;
+        break;
+      }
+
+      const batch = admin.firestore().batch();
+      let batchNotificationCount = 0;
+
+      usersSnapshot.forEach((doc) => {
+        const userId = doc.id;
+
+        batch.update(doc.ref, {
+          notifications: admin.firestore.FieldValue.arrayUnion({
+            title: "Profile Verification",
+            titleEsp: "Verificación de Perfil",
+            content: "Get verified! Certify your profile for added trust.",
+            contentEsp: "¡Verifica tu perfil! Certifica tu perfil para mayor confianza.",
+            notificationType: "19",
+            isRead: false,
+            date: Timestamp.now(),
+            image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2Fkyc_1.png?alt=media&token=f316b428-a344-4746-b135-e2196a815855",
+            eventId: "",
+            eventHost: "",
+            navigation: "kycPhone",
+          }),
+        });
+        batchNotificationCount++;
+
+        const message = {
+          notification: {
+            title: "Profile Verification",
+            body: "Get verified! Certify your profile for added trust.",
+          },
+          data: {
+            notification: "19",
+            image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2Fkyc_1.png?alt=media&token=f316b428-a344-4746-b135-e2196a815855",
+            date: new Date().toISOString(),
+          },
+          android: {
+            notification: {
+              sound: "default",
+              priority: "high",
+              channelId: "high_importance_channel",
+            },
+          },
+          apns: {
+            payload: {
+              aps: {
+                sound: "default",
+              },
+            },
+          },
+          topic: `${userId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+        };
+
+        admin.messaging().send(message)
+            .then(() => {
+              console.log(`FCM notification sent to user: ${userId}`);
+            })
+            .catch((error) => {
+              console.error(`Error sending FCM to user ${userId}:`, error);
+            });
+      });
+
+      await batch.commit();
+      totalNotified += batchNotificationCount;
+      totalProcessed += usersSnapshot.size;
+      lastDoc = usersSnapshot.docs[usersSnapshot.docs.length - 1];
+
+      console.log(`Processed ${totalProcessed} users so far, notified ${totalNotified} users`);
+    }
+
+    console.log(`Profile verification notifications completed. Total processed: ${totalProcessed}, Total notified: ${totalNotified}`);
+    return null;
+  } catch (error) {
+    console.error("Error in sendNotificationProfileVerification:", error);
+    throw error;
+  }
+});
+
+exports.sendNotificationProfileVerificationComplete = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const {userId} = req.body;
+
+  if (!userId) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The userId is required",
+    });
+  }
+
+  const message = {
+    notification: {
+      title: "Profile Verification Complete",
+      body: "Your profile is now verified! Enjoy more trust and better connections.",
+    },
+    data: {
+      notification: "20",
+      image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2Fkyc_1.png?alt=media&token=f316b428-a344-4746-b135-e2196a815855",
+      date: new Date().toISOString(),
+    },
+    android: {
+      notification: {
+        sound: "default",
+        priority: "high",
+        channelId: "high_importance_channel",
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+    topic: `${userId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+  };
+
+  try {
+    await admin.messaging().send(message);
+    console.log(`Notification successfully sent to the topic: ${userId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
+
+    await admin.firestore().collection("user").doc(userId).update({
+      notifications: FieldValue.arrayUnion({
+        title: "Profile Verification Complete",
+        titleEsp: "Verificación de Perfil Completa",
+        content: "Your profile is now verified! Enjoy more trust and better connections.",
+        contentEsp: "¡Tu perfil ahora está verificado! Disfruta de mayor confianza y mejores conexiones.",
+        notificationType: "20",
+        isRead: false,
+        date: Timestamp.now(),
+        image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2Fkyc_1.png?alt=media&token=f316b428-a344-4746-b135-e2196a815855",
+        eventId: "",
+        eventHost: "",
+        navigation: "",
+      }),
+    });
+
+    console.log("Notification successfully added to user document.");
+    return res.status(200).send({message: "Notification sent successfully"});
+  } catch (error) {
+    console.error("Error sending sendNotificationProfileVerificationComplete notification:", error);
+    return res.status(500).send({
+      error: "internal",
+      message: "Error sending sendNotificationProfileVerificationComplete notification",
+      details: error.message,
+    });
+  }
+});
+
 exports.sendNotificationRewardEarned = functions.https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
