@@ -3149,6 +3149,79 @@ exports.sendNotificationProfileVerificationComplete = functions.https.onRequest(
   }
 });
 
+exports.sendNotificationPaymentSuccessful = functions.https.onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    return res.status(405).send("Method not allowed");
+  }
+
+  const {userId} = req.body;
+
+  if (!userId) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The userId is required",
+    });
+  }
+
+  const message = {
+    notification: {
+      title: "Payment Successful",
+      body: "Your payment was successful! Enjoy your premium features",
+    },
+    data: {
+      notification: "21",
+      image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2Fstore_AI.png?alt=media&token=290a4469-340d-4d26-a54d-115d1ec8a077",
+      date: new Date().toISOString(),
+    },
+    android: {
+      notification: {
+        sound: "default",
+        priority: "high",
+        channelId: "high_importance_channel",
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+    topic: `${userId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+  };
+
+  try {
+    await admin.messaging().send(message);
+    console.log(`Notification successfully sent to the topic: ${userId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`);
+
+    await admin.firestore().collection("user").doc(userId).update({
+      notifications: FieldValue.arrayUnion({
+        title: "Payment Successful",
+        titleEsp: "Pago Exitoso",
+        content: "Your payment was successful! Enjoy your premium features",
+        contentEsp: "¡Tu pago fue exitoso! Disfruta de tus funciones premium",
+        notificationType: "21",
+        isRead: false,
+        date: Timestamp.now(),
+        image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2Fstore_AI.png?alt=media&token=290a4469-340d-4d26-a54d-115d1ec8a077",
+        eventId: "",
+        eventHost: "",
+        navigation: "storegplay",
+      }),
+    });
+
+    console.log("Notification successfully added to user document.");
+    return res.status(200).send({message: "Notification sent successfully"});
+  } catch (error) {
+    console.error("Error sending sendNotificationPaymentSuccessful notification:", error);
+    return res.status(500).send({
+      error: "internal",
+      message: "Error sending sendNotificationPaymentSuccessful notification",
+      details: error.message,
+    });
+  }
+});
+
 exports.sendNotificationRewardEarned = functions.https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
