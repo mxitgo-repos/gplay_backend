@@ -138,22 +138,71 @@ exports.checkEmail = functions.https.onRequest(async (req, res) => {
     return res.status(405).send("Method not allowed");
   }
 
-  const email = req.body.email;
+  const {email, userId} = req.body;
+
+  if (!email) {
+    return res.status(400).send({
+      error: "bad-request",
+      message: "The email is required",
+    });
+  }
 
   try {
-    const userRecord = await admin.auth().getUserByEmail(email);
+    let existsInAuth = false;
+    let authMethods = [];
+    let authUserId = null;
 
-    return res.status(200).send({exists: true, methods: userRecord.providerData.map((provider) => provider.providerId)});
-  } catch (error) {
-    if (error.code === "auth/user-not-found") {
-      return res.status(200).send({exists: false});
-    } else {
-      return res.status(500).send({
-        error: "internal",
-        message: "Error checking email",
-        details: error.message,
+    // Check in Firebase Auth
+    try {
+      const userRecord = await admin.auth().getUserByEmail(email);
+      authUserId = userRecord.uid;
+      existsInAuth = true;
+      authMethods = userRecord.providerData.map((provider) => provider.providerId);
+    } catch (error) {
+      if (error.code !== "auth/user-not-found") {
+        throw error;
+      }
+    }
+
+    // If exists in Auth and it's the same user, skip Auth validation
+    if (existsInAuth && userId && authUserId === userId) {
+      existsInAuth = false;
+    }
+
+    // Check in Firestore with kyc = true, excluding the current user
+    const querySnapshot = await admin.firestore()
+        .collection("user")
+        .where("kyc", "==", true)
+        .where("email", "==", email)
+        .get();
+
+    // Filter out the current user from Firestore results
+    const existsInFirestore = querySnapshot.docs.some((doc) => {
+      return !userId || doc.id !== userId;
+    });
+
+    // If exists in either Auth or Firestore (excluding current user), email is taken
+    if (existsInAuth || existsInFirestore) {
+      return res.status(200).send({
+        exists: true,
+        existsInAuth: existsInAuth,
+        existsInFirestore: existsInFirestore,
+        methods: authMethods,
       });
     }
+
+    // Email is available
+    return res.status(200).send({
+      exists: false,
+      existsInAuth: false,
+      existsInFirestore: false,
+    });
+  } catch (error) {
+    return res.status(500).send({
+      error: "internal",
+      message: "Error checking email",
+      details: error.message,
+    });
   }
 });
 
@@ -2326,7 +2375,7 @@ exports.validatePhoneNumber = functions.https.onRequest(async (req, res) => {
   }
 
   const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-  const {phoneNumber} = body;
+  const {phoneNumber, userId} = body;
 
   if (phoneNumber === undefined) {
     return res.status(400).send({
@@ -2336,16 +2385,52 @@ exports.validatePhoneNumber = functions.https.onRequest(async (req, res) => {
   }
 
   try {
+    let existsInAuth = false;
+    let authUserId = null;
+
+    // Check in Firebase Auth
+    try {
+      const userRecord = await admin.auth().getUserByPhoneNumber(phoneNumber);
+      authUserId = userRecord.uid;
+      existsInAuth = true;
+    } catch (error) {
+      if (error.code !== "auth/user-not-found") {
+        throw error;
+      }
+    }
+
+    // If exists in Auth and it's the same user, skip Auth validation
+    if (existsInAuth && userId && authUserId === userId) {
+      existsInAuth = false;
+    }
+
+    // Check in Firestore with kyc = true, excluding the current user
     const querySnapshot = await admin.firestore()
         .collection("user")
         .where("kyc", "==", true)
         .where("phoneNumber", "==", phoneNumber)
-        .limit(1)
         .get();
 
-    const exists = !querySnapshot.empty;
+    // Filter out the current user from Firestore results
+    const existsInFirestore = querySnapshot.docs.some((doc) => {
+      return !userId || doc.id !== userId;
+    });
 
-    return res.status(200).send({exists});
+    // If exists in either Auth or Firestore (excluding current user), phone number is taken
+    if (existsInAuth || existsInFirestore) {
+      return res.status(200).send({
+        exists: true,
+        existsInAuth: existsInAuth,
+        existsInFirestore: existsInFirestore,
+      });
+    }
+
+    // Phone number is available
+    return res.status(200).send({
+      exists: false,
+      existsInAuth: false,
+      existsInFirestore: false,
+    });
   } catch (error) {
     return res.status(500).send({
       error: "internal",
