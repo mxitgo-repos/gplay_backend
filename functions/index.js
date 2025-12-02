@@ -3097,7 +3097,7 @@ exports.sendNotificationProfileVerification = functions.pubsub.schedule("0 12 * 
             title: "Profile Verification",
             titleEsp: "Verificación de Perfil",
             content: "Get verified! Certify your profile for added trust.",
-            contentEsp: "¡Verifica tu perfil! Certifica tu perfil para mayor confianza.",
+            contentEsp: "¡Verifica tu perfil! Certifica tu perfil para obtener mayor confianza.",
             notificationType: "19",
             isRead: false,
             date: Timestamp.now(),
@@ -3234,103 +3234,103 @@ exports.sendNotificationProfileVerificationComplete = functions.https.onRequest(
   }
 });
 
-exports.sendNotificationUpgradeToPremium = functions.pubsub.schedule("0 12 * * 1").onRun(async () => {
-  console.log("Starting sendNotificationUpgradeToPremium function");
+// exports.sendNotificationUpgradeToPremium = functions.pubsub.schedule("0 12 * * 1").onRun(async () => {
+//   console.log("Starting sendNotificationUpgradeToPremium function");
 
-  try {
-    const usersRef = admin.firestore().collection("user").where("isPremium", "==", false);
-    const batchSize = 500;
-    let lastDoc = null;
-    let hasMoreDocuments = true;
-    let totalProcessed = 0;
-    let totalNotified = 0;
+//   try {
+//     const usersRef = admin.firestore().collection("user").where("isPremium", "==", false);
+//     const batchSize = 500;
+//     let lastDoc = null;
+//     let hasMoreDocuments = true;
+//     let totalProcessed = 0;
+//     let totalNotified = 0;
 
-    while (hasMoreDocuments) {
-      let query = usersRef.limit(batchSize);
-      if (lastDoc) {
-        query = query.startAfter(lastDoc);
-      }
+//     while (hasMoreDocuments) {
+//       let query = usersRef.limit(batchSize);
+//       if (lastDoc) {
+//         query = query.startAfter(lastDoc);
+//       }
 
-      const usersSnapshot = await query.get();
-      if (usersSnapshot.empty) {
-        hasMoreDocuments = false;
-        break;
-      }
+//       const usersSnapshot = await query.get();
+//       if (usersSnapshot.empty) {
+//         hasMoreDocuments = false;
+//         break;
+//       }
 
-      const batch = admin.firestore().batch();
-      let batchNotificationCount = 0;
+//       const batch = admin.firestore().batch();
+//       let batchNotificationCount = 0;
 
-      usersSnapshot.forEach((doc) => {
-        const userId = doc.id;
+//       usersSnapshot.forEach((doc) => {
+//         const userId = doc.id;
 
-        batch.update(doc.ref, {
-          notifications: admin.firestore.FieldValue.arrayUnion({
-            title: "Upgrade to Premium",
-            titleEsp: "Actualiza a Premium",
-            content: "Unlock premium features by upgrading now",
-            contentEsp: "Desbloquea funciones premium actualizando ahora",
-            notificationType: "22",
-            isRead: false,
-            date: Timestamp.now(),
-            image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2FG-Play.jpg?alt=media&token=a3479901-e2c5-448e-9096-f652f058c0af",
-            eventId: "",
-            eventHost: "",
-            navigation: "storegplay",
-          }),
-        });
-        batchNotificationCount++;
+//         batch.update(doc.ref, {
+//           notifications: admin.firestore.FieldValue.arrayUnion({
+//             title: "Upgrade to Premium",
+//             titleEsp: "Actualiza a Premium",
+//             content: "Unlock premium features by upgrading now",
+//             contentEsp: "Desbloquea funciones premium actualizando ahora",
+//             notificationType: "22",
+//             isRead: false,
+//             date: Timestamp.now(),
+//             image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2FG-Play.jpg?alt=media&token=a3479901-e2c5-448e-9096-f652f058c0af",
+//             eventId: "",
+//             eventHost: "",
+//             navigation: "storegplay",
+//           }),
+//         });
+//         batchNotificationCount++;
 
-        const message = {
-          notification: {
-            title: "Upgrade to Premium",
-            body: "Unlock premium features by upgrading now",
-          },
-          data: {
-            notification: "22",
-            image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2FG-Play.jpg?alt=media&token=a3479901-e2c5-448e-9096-f652f058c0af",
-            date: new Date().toISOString(),
-          },
-          android: {
-            notification: {
-              sound: "default",
-              priority: "high",
-              channelId: "high_importance_channel",
-            },
-          },
-          apns: {
-            payload: {
-              aps: {
-                sound: "default",
-              },
-            },
-          },
-          topic: `${userId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
-        };
+//         const message = {
+//           notification: {
+//             title: "Upgrade to Premium",
+//             body: "Unlock premium features by upgrading now",
+//           },
+//           data: {
+//             notification: "22",
+//             image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2FG-Play.jpg?alt=media&token=a3479901-e2c5-448e-9096-f652f058c0af",
+//             date: new Date().toISOString(),
+//           },
+//           android: {
+//             notification: {
+//               sound: "default",
+//               priority: "high",
+//               channelId: "high_importance_channel",
+//             },
+//           },
+//           apns: {
+//             payload: {
+//               aps: {
+//                 sound: "default",
+//               },
+//             },
+//           },
+//           topic: `${userId.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}`,
+//         };
 
-        admin.messaging().send(message)
-            .then(() => {
-              console.log(`FCM notification sent to user: ${userId}`);
-            })
-            .catch((error) => {
-              console.error(`Error sending FCM to user ${userId}:`, error);
-            });
-      });
+//         admin.messaging().send(message)
+//             .then(() => {
+//               console.log(`FCM notification sent to user: ${userId}`);
+//             })
+//             .catch((error) => {
+//               console.error(`Error sending FCM to user ${userId}:`, error);
+//             });
+//       });
 
-      await batch.commit();
-      totalNotified += batchNotificationCount;
-      totalProcessed += usersSnapshot.size;
-      lastDoc = usersSnapshot.docs[usersSnapshot.docs.length - 1];
+//       await batch.commit();
+//       totalNotified += batchNotificationCount;
+//       totalProcessed += usersSnapshot.size;
+//       lastDoc = usersSnapshot.docs[usersSnapshot.docs.length - 1];
 
-      console.log(`Processed ${totalProcessed} users so far, notified ${totalNotified} users`);
-    }
+//       console.log(`Processed ${totalProcessed} users so far, notified ${totalNotified} users`);
+//     }
 
-    console.log(`Upgrade to premium notifications completed. Total processed: ${totalProcessed}, Total notified: ${totalNotified}`);
-    return null;
-  } catch (error) {
-    console.error("Error in sendNotificationUpgradeToPremium:", error);
-    throw error;
-  }
-});
+//     console.log(`Upgrade to premium notifications completed. Total processed: ${totalProcessed}, Total notified: ${totalNotified}`);
+//     return null;
+//   } catch (error) {
+//     console.error("Error in sendNotificationUpgradeToPremium:", error);
+//     throw error;
+//   }
+// });
 
 exports.sendNotificationPaymentSuccessful = functions.https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
@@ -3430,7 +3430,7 @@ exports.sendNotificationRewardEarned = functions.https.onRequest(async (req, res
         reward: reward,
         taskName: taskName,
       }),
-      image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2FG-Tokens_gray.png?alt=media&token=81bff579-3c7e-4198-aa19-39b496b55d19",
+      image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2Fgift-solid-full.png?alt=media&token=e373694e-bf98-442a-887b-e77e16aec8f9",
       date: new Date().toISOString(),
     },
     android: {
@@ -3463,7 +3463,7 @@ exports.sendNotificationRewardEarned = functions.https.onRequest(async (req, res
         notificationType: "18",
         isRead: false,
         date: Timestamp.now(),
-        image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2FG-Tokens_gray.png?alt=media&token=81bff579-3c7e-4198-aa19-39b496b55d19",
+        image: "https://firebasestorage.googleapis.com/v0/b/g-play-dev-e4c4c.firebasestorage.app/o/notification%2Fgift-solid-full.png?alt=media&token=e373694e-bf98-442a-887b-e77e16aec8f9",
         eventId: "",
         eventHost: "",
         navigation: "rewards",
