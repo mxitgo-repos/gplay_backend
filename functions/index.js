@@ -2190,7 +2190,7 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
   // } = body;
 
   const {
-    eventId, participants, userId, tokensEvent, isSelling,
+    eventId, participants, userId, isSelling,
     usersPaid,
   } = body;
 
@@ -2304,17 +2304,17 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
     });
     batchOperations += 1;
 
-    const gtokensTotal = isSelling ? (tokensEvent + 100) : tokensEvent;
+    // const gtokensTotal = isSelling ? (tokensEvent + 100) : tokensEvent;
     const userRef = db.collection("user").doc(userId);
 
     batch.update(userRef, {
-      gTokens: FieldValue.increment(gtokensTotal - referralProcessedCount),
+      // gTokens: FieldValue.increment(gtokensTotal - referralProcessedCount),
       retentionGTokens: FieldValue.increment(isSelling ? -100 : 0),
       badgesCreated: participants.length == 0 ? FieldValue.increment(0) : FieldValue.increment(1),
     });
     batchOperations += 1;
 
-    console.log(`User ${userId} tokens deducted: ${referralProcessedCount}`);
+    // console.log(`User ${userId} tokens deducted: ${referralProcessedCount}`);
 
     const participantRefs = participants.map((path) => db.doc(path));
 
@@ -2348,7 +2348,7 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
     console.log(`Event ${eventId} finished successfully`);
     return res.status(200).send({
       message: "Event finished successfully",
-      referralProcessed: referralProcessedCount,
+      // referralProcessed: referralProcessedCount,
     });
   } catch (error) {
     console.error("Error in eventFinish:", error);
