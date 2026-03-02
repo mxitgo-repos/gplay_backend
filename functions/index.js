@@ -3610,3 +3610,222 @@ async function updateAmbassadorTasks(userId, userData, participantCount) {
 //   const now = new Date();
 //   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 // }
+
+// ==================== APPLE IN-APP PURCHASE VALIDATION ====================
+
+// Apple's receipt validation URLs
+const APPLE_PRODUCTION_URL = "https://buy.itunes.apple.com/verifyReceipt";
+const APPLE_SANDBOX_URL = "https://sandbox.itunes.apple.com/verifyReceipt";
+
+// Your App's Shared Secret from App Store Connect
+// Set with: firebase functions:config:set apple.shared_secret="YOUR_SECRET"
+const getAppleSharedSecret = () => {
+  return functions.config().apple?.shared_secret || process.env.APPLE_SHARED_SECRET || "";
+};
+
+/**
+ * Validates an Apple receipt with Apple's servers
+ */
+exports.validateAppleReceipt = functions.https.onCall(async (data, context) => {
+  const {receiptData, productId, transactionId} = data;
+
+  if (!receiptData) {
+    throw new functions.https.HttpsError("invalid-argument", "Receipt data is required");
+  }
+
+  try {
+    // First try production URL
+    let result = await validateWithApple(receiptData, APPLE_PRODUCTION_URL);
+
+    // If status is 21007, receipt is from sandbox, retry with sandbox URL
+    if (result.status === 21007) {
+      result = await validateWithApple(receiptData, APPLE_SANDBOX_URL);
+    }
+
+    // Check if valid
+    if (result.status === 0) {
+      // Receipt is valid
+      const receipt = result.receipt;
+      const inAppPurchases = receipt.in_app || [];
+
+      // Find the specific transaction
+      const purchase = inAppPurchases.find(
+          (p) => p.product_id === productId || p.transaction_id === transactionId,
+      );
+
+      if (purchase) {
+        console.log("Valid Apple purchase:", {
+          productId: purchase.product_id,
+          transactionId: purchase.transaction_id,
+          purchaseDate: purchase.purchase_date,
+        });
+
+        return {
+          valid: true,
+          productId: purchase.product_id,
+          transactionId: purchase.transaction_id,
+          purchaseDate: purchase.purchase_date,
+        };
+      } else {
+        console.log("Product not found in Apple receipt");
+        return {valid: false, error: "Product not found in receipt"};
+      }
+    } else {
+      console.log("Apple receipt validation failed with status:", result.status);
+      return {valid: false, status: result.status, error: getAppleStatusMessage(result.status)};
+    }
+  } catch (error) {
+    console.error("Error validating Apple receipt:", error);
+    throw new functions.https.HttpsError("internal", "Failed to validate receipt");
+  }
+});
+
+/**
+ * Send receipt to Apple for validation
+ * @param {string} receiptData - Base64 encoded receipt data from the app
+ * @param {string} url - Apple's verification URL (production or sandbox)
+ * @return {Promise<Object>} Apple's validation response
+ */
+async function validateWithApple(receiptData, url) {
+  const fetch = (await import("node-fetch")).default;
+
+  const requestBody = {
+    "receipt-data": receiptData,
+    "password": getAppleSharedSecret(),
+    "exclude-old-transactions": true,
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  return await response.json();
+}
+
+/**
+ * Get human-readable Apple status message
+ * @param {number} status - Apple's status code from receipt validation
+ * @return {string} Human-readable error message
+ */
+function getAppleStatusMessage(status) {
+  const messages = {
+    21000: "The request to the App Store was not made using the HTTP POST request method.",
+    21001: "This status code is no longer sent by the App Store.",
+    21002: "The data in the receipt-data property was malformed or the service experienced a temporary issue.",
+    21003: "The receipt could not be authenticated.",
+    21004: "The shared secret you provided does not match the shared secret on file for your account.",
+    21005: "The receipt server was temporarily unable to provide the receipt.",
+    21006: "This receipt is valid but the subscription has expired.",
+    21007: "This receipt is from the test environment (sandbox).",
+    21008: "This receipt is from the production environment.",
+    21009: "Internal data access error.",
+    21010: "The user account cannot be found or has been deleted.",
+  };
+  return messages[status] || `Unknown status: ${status}`;
+}
+
+// ==================== GOOGLE PLAY IN-APP PURCHASE VALIDATION ====================
+
+const {google} = require("googleapis");
+
+// Initialize Google Play Developer API
+const androidPublisher = google.androidpublisher("v3");
+
+/**
+ * Validates a Google Play purchase
+ * Called from the Flutter app after a purchase is made
+ * @param {Object} data - The purchase data from the client
+ * @param {Object} context - Firebase callable context
+ * @return {Promise<Object>} Validation result
+ */
+exports.validateGooglePurchase = functions.https.onCall(async (data, context) => {
+  const {purchaseToken, productId, packageName} = data;
+
+  // Validate input
+  if (!purchaseToken || !productId || !packageName) {
+    throw new functions.https.HttpsError(
+        "invalid-argument",
+        "Missing required parameters: purchaseToken, productId, packageName",
+    );
+  }
+
+  try {
+    // Authenticate with Google using service account
+    const auth = new google.auth.GoogleAuth({
+      scopes: ["https://www.googleapis.com/auth/androidpublisher"],
+    });
+
+    const authClient = await auth.getClient();
+
+    // Log which service account is being used
+    const credentials = await auth.getCredentials();
+    console.log("Using service account:", credentials.client_email);
+
+    // Verify the purchase with Google Play
+    const response = await androidPublisher.purchases.products.get({
+      auth: authClient,
+      packageName: packageName,
+      productId: productId,
+      token: purchaseToken,
+    });
+
+    const purchase = response.data;
+
+    // Check purchase state
+    // 0 = Purchased
+    // 1 = Canceled
+    // 2 = Pending
+    const purchaseState = purchase.purchaseState;
+
+    if (purchaseState === 0) {
+      console.log("Valid Google Play purchase:", {
+        orderId: purchase.orderId,
+        purchaseTime: purchase.purchaseTimeMillis,
+        productId: productId,
+      });
+
+      return {
+        valid: true,
+        orderId: purchase.orderId,
+        purchaseTime: purchase.purchaseTimeMillis,
+        consumptionState: purchase.consumptionState,
+      };
+    } else if (purchaseState === 1) {
+      console.log("Google Play purchase was canceled:", productId);
+      return {
+        valid: false,
+        reason: "Purchase was canceled",
+      };
+    } else if (purchaseState === 2) {
+      console.log("Google Play purchase is pending:", productId);
+      return {
+        valid: false,
+        reason: "Purchase is pending",
+      };
+    } else {
+      return {
+        valid: false,
+        reason: "Unknown purchase state",
+      };
+    }
+  } catch (error) {
+    console.error("Error validating Google Play purchase:", error);
+
+    // Check for specific Google API errors
+    if (error.code === 404) {
+      return {
+        valid: false,
+        reason: "Purchase not found",
+      };
+    }
+
+    throw new functions.https.HttpsError(
+        "internal",
+        "Error validating purchase: " + error.message,
+    );
+  }
+});
