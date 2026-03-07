@@ -372,7 +372,7 @@ exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
 exports.sendNotificationByInterest = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
   const eventData = snap.data();
 
-  if (!eventData.isPrivate) {
+  if (!eventData.isPrivate && !eventData.adult) {
     const message = {
       notification: {
         title: "Event Just for You!",
@@ -589,7 +589,7 @@ exports.sendNotificationInviteUsers = functions.runWith({memory: "1GB"}).https.o
 exports.sendNotificationByState = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
   const eventData = snap.data();
 
-  if (!eventData.isPrivate) {
+  if (!eventData.isPrivate && !eventData.adult) {
     const message = {
       notification: {
         title: "New Events Nearby!",
@@ -911,7 +911,7 @@ exports.sendNotificationEventFinish = functions.https.onRequest(async (req, res)
 exports.sendNotificationLastMinutes = functions.firestore.document("event/{eventId}").onCreate(async (snap, context) => {
   const eventData = snap.data();
 
-  if (!eventData.isPrivate) {
+  if (!eventData.isPrivate && !eventData.adult) {
     const startDate = eventData.startDate.toDate();
 
     const today = new Date();
