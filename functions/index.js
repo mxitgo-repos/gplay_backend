@@ -3030,16 +3030,39 @@ exports.replenishFreeChats = functions.pubsub.schedule("0 0 * * *").onRun(async 
         const userData = doc.data();
         const currentFreeChats = userData?.pack?.chats?.free || 0;
         const currentPaidChats = userData?.pack?.chats?.paid || 0;
+        const isPremium = userData?.isPremium;
 
-        if (currentFreeChats < 5) {
-          const newFreeChats = 5;
-          const newTotal = newFreeChats + currentPaidChats;
+        // Skip users with undefined/null isPremium
+        if (isPremium === null || isPremium === undefined) {
+          return;
+        }
 
-          batch.update(doc.ref, {
-            "pack.chats.free": newFreeChats,
-            "pack.chats.total": newTotal,
-          });
-          batchUpdateCount++;
+        if (isPremium === true) {
+          // Premium users: ensure total is 20
+          const currentTotal = currentFreeChats + currentPaidChats;
+          if (currentTotal < 20) {
+            const chatsToAdd = 20 - currentTotal;
+            const newPaidChats = currentPaidChats + chatsToAdd;
+            const newTotal = currentFreeChats + newPaidChats;
+
+            batch.update(doc.ref, {
+              "pack.chats.paid": newPaidChats,
+              "pack.chats.total": newTotal,
+            });
+            batchUpdateCount++;
+          }
+        } else {
+          // Non-premium users: replenish free chats to 5
+          if (currentFreeChats < 5) {
+            const newFreeChats = 5;
+            const newTotal = newFreeChats + currentPaidChats;
+
+            batch.update(doc.ref, {
+              "pack.chats.free": newFreeChats,
+              "pack.chats.total": newTotal,
+            });
+            batchUpdateCount++;
+          }
         }
       });
 
@@ -3626,7 +3649,7 @@ const getAppleSharedSecret = () => {
 /**
  * Validates an Apple receipt with Apple's servers
  */
-exports.validateAppleReceipt = functions.https.onCall(async (data, context) => {
+exports.validateAppleReceipt = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   const {receiptData, productId, transactionId} = data;
 
   if (!receiptData) {
