@@ -2184,15 +2184,15 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
     });
   }
 
-  // const {
-  //   eventId, participants, userId, tokensEvent, isSelling,
-  //   usersPaid, price, feeOption,
-  // } = body;
-
   const {
-    eventId, participants, userId, isSelling,
-    usersPaid,
+    eventId, participants, userId, tokensEvent, isSelling,
+    usersPaid, price, feeOption,
   } = body;
+
+  // const {
+  //   eventId, participants, userId, isSelling,
+  //   usersPaid,
+  // } = body;
 
   if (!Array.isArray(usersPaid) || !Array.isArray(participants)) {
     return res.status(400).send({
@@ -2206,89 +2206,89 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
   let batchOperations = 0;
 
   try {
-    // const dateFormatted = getFormattedDate();
-    // const gTokensPercentage = price * (feeOption / 100);
-    // let referralProcessedCount = 0;
+    const dateFormatted = getFormattedDate();
+    const gTokensPercentage = price * (feeOption / 100);
+    let referralProcessedCount = 0;
 
-    // const processReferralUser = async (paidUserId) => {
-    //   try {
-    //     const userDoc = await db.collection("user").doc(paidUserId).get();
+    const processReferralUser = async (paidUserId) => {
+      try {
+        const userDoc = await db.collection("user").doc(paidUserId).get();
 
-    //     if (!userDoc.exists) {
-    //       console.log(`User ${paidUserId} does not exist`);
-    //       return 0;
-    //     }
+        if (!userDoc.exists) {
+          console.log(`User ${paidUserId} does not exist`);
+          return 0;
+        }
 
-    //     const userData = userDoc.data();
-    //     const referredBy = userData.referredBy;
+        const userData = userDoc.data();
+        const referredBy = userData.referredBy;
 
-    //     if (!referredBy) return 0;
+        if (!referredBy) return 0;
 
-    //     const ref1Doc = await db.collection("user").doc(referredBy).get();
-    //     if (!ref1Doc.exists) return 0;
+        const ref1Doc = await db.collection("user").doc(referredBy).get();
+        if (!ref1Doc.exists) return 0;
 
-    //     console.log(`User ${referredBy} receives ${gTokensPercentage} tokens`);
+        console.log(`User ${referredBy} receives ${gTokensPercentage} tokens`);
 
-    //     if (batchOperations >= BATCH_SIZE - 10) {
-    //       await batch.commit();
-    //       batch = db.batch();
-    //       batchOperations = 0;
-    //     }
+        if (batchOperations >= BATCH_SIZE - 10) {
+          await batch.commit();
+          batch = db.batch();
+          batchOperations = 0;
+        }
 
-    //     const userRef = db.collection("user").doc(referredBy);
-    //     const level1Ref = userRef.collection("level1").doc(paidUserId);
-    //     const earningsRef = userRef.collection("earningsLevel1").doc(dateFormatted);
-    //     const mlmEarningsRef = db.collection("mlmEarnings").doc(dateFormatted);
-    //     const mlmTrackingRef = db.collection("mlmTracking").doc(paidUserId);
+        const userRef = db.collection("user").doc(referredBy);
+        const level1Ref = userRef.collection("level1").doc(paidUserId);
+        const earningsRef = userRef.collection("earningsLevel1").doc(dateFormatted);
+        const mlmEarningsRef = db.collection("mlmEarnings").doc(dateFormatted);
+        const mlmTrackingRef = db.collection("mlmTracking").doc(paidUserId);
 
-    //     batch.update(userRef, {
-    //       "earningsReferral.level1": FieldValue.increment(gTokensPercentage),
-    //       "earningsReferral.total": FieldValue.increment(gTokensPercentage),
-    //       "gTokens": FieldValue.increment(gTokensPercentage),
-    //       "transactionsReferral": FieldValue.arrayUnion({
-    //         "date": dateFormatted,
-    //         "amount": gTokensPercentage,
-    //         "type": "ticket_purchase",
-    //         "event": eventId,
-    //       }),
-    //     });
+        batch.update(userRef, {
+          "earningsReferral.level1": FieldValue.increment(gTokensPercentage),
+          "earningsReferral.total": FieldValue.increment(gTokensPercentage),
+          "gTokens": FieldValue.increment(gTokensPercentage),
+          "transactionsReferral": FieldValue.arrayUnion({
+            "date": dateFormatted,
+            "amount": gTokensPercentage,
+            "type": "ticket_purchase",
+            "event": eventId,
+          }),
+        });
 
-    //     batch.set(level1Ref, {
-    //       "amount": gTokensPercentage,
-    //       "userId": paidUserId,
-    //       "lastMove": FieldValue.serverTimestamp(),
-    //     }, {merge: true});
+        batch.set(level1Ref, {
+          "amount": gTokensPercentage,
+          "userId": paidUserId,
+          "lastMove": FieldValue.serverTimestamp(),
+        }, {merge: true});
 
-    //     batch.set(earningsRef, {
-    //       "earnings": FieldValue.increment(gTokensPercentage),
-    //     }, {merge: true});
+        batch.set(earningsRef, {
+          "earnings": FieldValue.increment(gTokensPercentage),
+        }, {merge: true});
 
-    //     batch.set(mlmEarningsRef, {
-    //       "earnings": FieldValue.increment(gTokensPercentage),
-    //       "dateEarnings": FieldValue.serverTimestamp(),
-    //     }, {merge: true});
+        batch.set(mlmEarningsRef, {
+          "earnings": FieldValue.increment(gTokensPercentage),
+          "dateEarnings": FieldValue.serverTimestamp(),
+        }, {merge: true});
 
-    //     batch.set(mlmTrackingRef, {
-    //       "lastMove": FieldValue.serverTimestamp(),
-    //       "level": 1,
-    //     }, {merge: true});
+        batch.set(mlmTrackingRef, {
+          "lastMove": FieldValue.serverTimestamp(),
+          "level": 1,
+        }, {merge: true});
 
-    //     batchOperations += 5;
-    //     return gTokensPercentage;
-    //   } catch (error) {
-    //     console.error(`Error processing user ${paidUserId}:`, error.message);
-    //     return 0;
-    //   }
-    // };
+        batchOperations += 5;
+        return gTokensPercentage;
+      } catch (error) {
+        console.error(`Error processing user ${paidUserId}:`, error.message);
+        return 0;
+      }
+    };
 
-    // console.log(`Processing ${usersPaid.length} referral users`);
-    // const referralResults = await processInChunks(
-    //     usersPaid,
-    //     CONCURRENT_LIMIT,
-    //     processReferralUser,
-    // );
+    console.log(`Processing ${usersPaid.length} referral users`);
+    const referralResults = await processInChunks(
+        usersPaid,
+        CONCURRENT_LIMIT,
+        processReferralUser,
+    );
 
-    // referralProcessedCount = referralResults.reduce((sum, amount) => sum + amount, 0);
+    referralProcessedCount = referralResults.reduce((sum, amount) => sum + amount, 0);
 
     if (batchOperations >= BATCH_SIZE - 5) {
       await batch.commit();
@@ -2304,17 +2304,17 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
     });
     batchOperations += 1;
 
-    // const gtokensTotal = isSelling ? (tokensEvent + 100) : tokensEvent;
+    const gtokensTotal = isSelling ? (tokensEvent + 100) : tokensEvent;
     const userRef = db.collection("user").doc(userId);
 
     batch.update(userRef, {
-      // gTokens: FieldValue.increment(gtokensTotal - referralProcessedCount),
+      gTokens: FieldValue.increment(gtokensTotal - referralProcessedCount),
       retentionGTokens: FieldValue.increment(isSelling ? -100 : 0),
       badgesCreated: participants.length == 0 ? FieldValue.increment(0) : FieldValue.increment(1),
     });
     batchOperations += 1;
 
-    // console.log(`User ${userId} tokens deducted: ${referralProcessedCount}`);
+    console.log(`User ${userId} tokens deducted: ${referralProcessedCount}`);
 
     const participantRefs = participants.map((path) => db.doc(path));
 
