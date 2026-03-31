@@ -266,51 +266,125 @@ exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
   try {
     const {startDate, endDate} = req.body;
 
-    let startOfDay;
-    let endOfDay;
+    // Fetch all Firestore users that have the 'name' attribute (paginated)
+    const firestoreUsers = [];
+    let lastDoc = null;
 
-    if (startDate && endDate) {
-      startOfDay = new Date(startDate);
-      endOfDay = new Date(endDate);
-    } else {
-      const now = new Date();
-      startOfDay = new Date(now);
-      startOfDay.setHours(0, 0, 0, 0);
-      endOfDay = new Date(now);
-      endOfDay.setHours(23, 59, 59, 999);
-    }
+    do {
+      let query = admin
+          .firestore()
+          .collection("user")
+          .where("name", "!=", null)
+          .limit(500);
 
-    if (isNaN(startOfDay.getTime()) || isNaN(endOfDay.getTime())) {
-      return res.status(400).send({
-        error: "invalid_dates",
-        message: "Invalid date format",
+      if (lastDoc) {
+        query = query.startAfter(lastDoc);
+      }
+
+      const snapshot = await query.get();
+      if (snapshot.empty) break;
+
+      firestoreUsers.push(...snapshot.docs);
+      lastDoc = snapshot.docs[snapshot.docs.length - 1];
+
+      if (snapshot.docs.length < 500) break;
+    } while (lastDoc);
+
+    console.log(`Found ${firestoreUsers.length} Firestore users with 'name'`);
+
+    // Build a map of Firestore users by uid for quick lookup
+    const firestoreUserMap = {};
+    firestoreUsers.forEach((doc) => {
+      firestoreUserMap[doc.id] = doc;
+    });
+
+    // Fetch all Auth users with pagination
+    const allAuthUsers = {};
+    let pageToken = undefined;
+
+    do {
+      const listResult = await admin.auth().listUsers(1000, pageToken);
+      listResult.users.forEach((user) => {
+        allAuthUsers[user.uid] = user;
       });
+      pageToken = listResult.pageToken;
+    } while (pageToken);
+
+    console.log(`Found ${Object.keys(allAuthUsers).length} Auth users`);
+
+    // If date range provided, filter Auth users by registration date
+    let filteredAuthUsers = Object.values(allAuthUsers);
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return res.status(400).send({
+          error: "invalid_dates",
+          message: "Invalid date format",
+        });
+      }
+
+      filteredAuthUsers = filteredAuthUsers.filter((user) => {
+        const reg = new Date(user.metadata.creationTime);
+        return reg >= start && reg <= end;
+      });
+
+      console.log(`Filtered to ${filteredAuthUsers.length} Auth users registered between ${start.toISOString()} and ${end.toISOString()}`);
     }
 
-    console.log(`Getting users with lastActivity between ${startOfDay.toISOString()} and ${endOfDay.toISOString()}`);
+    const activeUsers = [];
+    const inactiveUsers = [];
 
-    const adminsSnapshot = await admin.firestore().collection("admins").get();
-    const adminIds = adminsSnapshot.docs.map((doc) => doc.id);
+    filteredAuthUsers.forEach((authUser) => {
+      const doc = firestoreUserMap[authUser.uid];
 
-    const usersSnapshot = await admin
-        .firestore()
-        .collection("user")
-        .where("lastActivity", ">=", admin.firestore.Timestamp.fromDate(startOfDay))
-        .where("lastActivity", "<=", admin.firestore.Timestamp.fromDate(endOfDay))
-        .get();
+      // Skip if not found in Firestore
+      if (!doc) return;
 
-    const activeUsers = usersSnapshot.docs
-        .filter((doc) => !adminIds.includes(doc.id))
-        .map((doc) => ({
-          uid: doc.id,
-          ...doc.data(),
-        }));
+      const userData = doc.data();
+
+      const lastActivity = userData.lastActivity?.toDate ?
+        userData.lastActivity.toDate() :
+        userData.lastActivity ?
+          new Date(userData.lastActivity) :
+          null;
+
+      const registrationDate = authUser.metadata.creationTime ?
+        new Date(authUser.metadata.creationTime) :
+        null;
+
+      if (!lastActivity || !registrationDate) return;
+
+      // Compare dates ignoring hours, minutes, seconds
+      const lastActivityDay = new Date(lastActivity.getFullYear(), lastActivity.getMonth(), lastActivity.getDate());
+      const registrationDay = new Date(registrationDate.getFullYear(), registrationDate.getMonth(), registrationDate.getDate());
+
+      const userInfo = {
+        uid: authUser.uid,
+        name: userData.name,
+        lastActivity: lastActivity.toISOString(),
+        registrationDate: registrationDate.toISOString(),
+      };
+
+      if (lastActivityDay.getTime() === registrationDay.getTime()) {
+        inactiveUsers.push(userInfo);
+      } else {
+        activeUsers.push(userInfo);
+      }
+    });
+
+    console.log(`Active: ${activeUsers.length}, Inactive: ${inactiveUsers.length}`);
 
     return res.status(200).send({
       activeUsers,
-      dateRange: {
-        start: startOfDay.toISOString(),
-        end: endOfDay.toISOString(),
+      inactiveUsers,
+      summary: {
+        total: activeUsers.length + inactiveUsers.length,
+        active: activeUsers.length,
+        inactive: inactiveUsers.length,
       },
     });
   } catch (error) {
