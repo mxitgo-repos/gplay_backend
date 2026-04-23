@@ -18,7 +18,7 @@ const LEVEL_CONFIG = {
   level4: {minParticipants: 25, taskIndex: 0, maxTotal: 5, isSubTask: true},
 };
 
-exports.getAllUsersAuthInfo = functions.https.onRequest(async (req, res) => {
+exports.getAllUsersAuthInfo = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
   res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -66,7 +66,7 @@ exports.getAllUsersAuthInfo = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.getUsersAuthInfo = functions.https.onRequest(async (req, res) => {
+exports.getUsersAuthInfo = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
   res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -133,7 +133,7 @@ exports.getUsersAuthInfo = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.checkEmail = functions.https.onRequest(async (req, res) => {
+exports.checkEmail = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -206,7 +206,7 @@ exports.checkEmail = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.deleteUser = functions.https.onRequest(async (req, res) => {
+exports.deleteUser = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
   res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -247,7 +247,7 @@ exports.deleteUser = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
+exports.getUsersByLoginDate = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
   res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -397,7 +397,7 @@ exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
+exports.putNotificationUser = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -877,7 +877,7 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * *")
   return null;
 });
 
-exports.sendNotificationEventFinish = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationEventFinish = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -1216,7 +1216,7 @@ exports.sendNotificationEventsReminderFavorite = functions.pubsub.schedule("0 12
   return null;
 });
 
-exports.sendNotificationNewMessage = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationNewMessage = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -1293,7 +1293,7 @@ exports.sendNotificationNewMessage = functions.https.onRequest(async (req, res) 
   }
 });
 
-exports.sendNotificationNewRequest = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationNewRequest = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -1633,7 +1633,7 @@ exports.sendNotificationCreateEvent = functions.pubsub.schedule("0 12 * * 1").on
 //   }
 // });
 
-exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationQuestionUser = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -1709,7 +1709,7 @@ exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res
   }
 });
 
-exports.sendNotificationAdmin = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationAdmin = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
   res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -2067,7 +2067,7 @@ exports.createPaymentIntentIos = functions.https.onCall(async (data, context) =>
   }
 });
 
-exports.sendNotificationAdminStrikes = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationAdminStrikes = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
   res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -2151,7 +2151,7 @@ exports.sendNotificationAdminStrikes = functions.https.onRequest(async (req, res
   }
 });
 
-exports.confirmPaymentIntent = functions.https.onRequest(async (req, res) => {
+exports.confirmPaymentIntent = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   try {
     const {paymentIntentId, token} = req.body;
 
@@ -2171,7 +2171,7 @@ exports.confirmPaymentIntent = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.appleCallbackHandler = functions.https.onRequest(async (req, res) => {
+exports.appleCallbackHandler = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   try {
     console.log("Request body:", req.body);
 
@@ -2187,7 +2187,7 @@ exports.appleCallbackHandler = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.eventClose = functions.https.onRequest(async (req, res) => {
+exports.eventClose = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -2443,7 +2443,7 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
   }
 });
 
-exports.validatePhoneNumber = functions.https.onRequest(async (req, res) => {
+exports.validatePhoneNumber = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -2851,7 +2851,7 @@ exports.updateAmbassadorRankingsManual = functions.https.onCall(async (data, con
   return {success: true, message: "Rankings updated correctly"};
 });
 
-exports.sendNotificationSendGift = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationSendGift = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
   res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -3258,7 +3258,7 @@ exports.sendNotificationProfileVerification = functions.pubsub.schedule("0 12 * 
   }
 });
 
-exports.sendNotificationProfileVerificationComplete = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationProfileVerificationComplete = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -3429,7 +3429,7 @@ exports.sendNotificationProfileVerificationComplete = functions.https.onRequest(
 //   }
 // });
 
-exports.sendNotificationPaymentSuccessful = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationPaymentSuccessful = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -3502,7 +3502,7 @@ exports.sendNotificationPaymentSuccessful = functions.https.onRequest(async (req
   }
 });
 
-exports.sendNotificationRewardEarned = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationRewardEarned = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
