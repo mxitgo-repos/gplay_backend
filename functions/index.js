@@ -18,7 +18,7 @@ const LEVEL_CONFIG = {
   level4: {minParticipants: 25, taskIndex: 0, maxTotal: 5, isSubTask: true},
 };
 
-exports.getAllUsersAuthInfo = functions.https.onRequest(async (req, res) => {
+exports.getAllUsersAuthInfo = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
   res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -66,7 +66,7 @@ exports.getAllUsersAuthInfo = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.getUsersAuthInfo = functions.https.onRequest(async (req, res) => {
+exports.getUsersAuthInfo = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
   res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -133,7 +133,7 @@ exports.getUsersAuthInfo = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.checkEmail = functions.https.onRequest(async (req, res) => {
+exports.checkEmail = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -206,7 +206,7 @@ exports.checkEmail = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.deleteUser = functions.https.onRequest(async (req, res) => {
+exports.deleteUser = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
   res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -247,7 +247,7 @@ exports.deleteUser = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
+exports.getUsersByLoginDate = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
   res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -266,51 +266,125 @@ exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
   try {
     const {startDate, endDate} = req.body;
 
-    let startOfDay;
-    let endOfDay;
+    // Fetch all Firestore users that have the 'name' attribute (paginated)
+    const firestoreUsers = [];
+    let lastDoc = null;
 
-    if (startDate && endDate) {
-      startOfDay = new Date(startDate);
-      endOfDay = new Date(endDate);
-    } else {
-      const now = new Date();
-      startOfDay = new Date(now);
-      startOfDay.setHours(0, 0, 0, 0);
-      endOfDay = new Date(now);
-      endOfDay.setHours(23, 59, 59, 999);
-    }
+    do {
+      let query = admin
+          .firestore()
+          .collection("user")
+          .where("name", "!=", null)
+          .limit(500);
 
-    if (isNaN(startOfDay.getTime()) || isNaN(endOfDay.getTime())) {
-      return res.status(400).send({
-        error: "invalid_dates",
-        message: "Invalid date format",
+      if (lastDoc) {
+        query = query.startAfter(lastDoc);
+      }
+
+      const snapshot = await query.get();
+      if (snapshot.empty) break;
+
+      firestoreUsers.push(...snapshot.docs);
+      lastDoc = snapshot.docs[snapshot.docs.length - 1];
+
+      if (snapshot.docs.length < 500) break;
+    } while (lastDoc);
+
+    console.log(`Found ${firestoreUsers.length} Firestore users with 'name'`);
+
+    // Build a map of Firestore users by uid for quick lookup
+    const firestoreUserMap = {};
+    firestoreUsers.forEach((doc) => {
+      firestoreUserMap[doc.id] = doc;
+    });
+
+    // Fetch all Auth users with pagination
+    const allAuthUsers = {};
+    let pageToken = undefined;
+
+    do {
+      const listResult = await admin.auth().listUsers(1000, pageToken);
+      listResult.users.forEach((user) => {
+        allAuthUsers[user.uid] = user;
       });
+      pageToken = listResult.pageToken;
+    } while (pageToken);
+
+    console.log(`Found ${Object.keys(allAuthUsers).length} Auth users`);
+
+    // If date range provided, filter Auth users by registration date
+    let filteredAuthUsers = Object.values(allAuthUsers);
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return res.status(400).send({
+          error: "invalid_dates",
+          message: "Invalid date format",
+        });
+      }
+
+      filteredAuthUsers = filteredAuthUsers.filter((user) => {
+        const reg = new Date(user.metadata.creationTime);
+        return reg >= start && reg <= end;
+      });
+
+      console.log(`Filtered to ${filteredAuthUsers.length} Auth users registered between ${start.toISOString()} and ${end.toISOString()}`);
     }
 
-    console.log(`Getting users with lastActivity between ${startOfDay.toISOString()} and ${endOfDay.toISOString()}`);
+    const activeUsers = [];
+    const inactiveUsers = [];
 
-    const adminsSnapshot = await admin.firestore().collection("admins").get();
-    const adminIds = adminsSnapshot.docs.map((doc) => doc.id);
+    filteredAuthUsers.forEach((authUser) => {
+      const doc = firestoreUserMap[authUser.uid];
 
-    const usersSnapshot = await admin
-        .firestore()
-        .collection("user")
-        .where("lastActivity", ">=", admin.firestore.Timestamp.fromDate(startOfDay))
-        .where("lastActivity", "<=", admin.firestore.Timestamp.fromDate(endOfDay))
-        .get();
+      // Skip if not found in Firestore
+      if (!doc) return;
 
-    const activeUsers = usersSnapshot.docs
-        .filter((doc) => !adminIds.includes(doc.id))
-        .map((doc) => ({
-          uid: doc.id,
-          ...doc.data(),
-        }));
+      const userData = doc.data();
+
+      const lastActivity = userData.lastActivity?.toDate ?
+        userData.lastActivity.toDate() :
+        userData.lastActivity ?
+          new Date(userData.lastActivity) :
+          null;
+
+      const registrationDate = authUser.metadata.creationTime ?
+        new Date(authUser.metadata.creationTime) :
+        null;
+
+      if (!lastActivity || !registrationDate) return;
+
+      // Compare dates ignoring hours, minutes, seconds
+      const lastActivityDay = new Date(lastActivity.getFullYear(), lastActivity.getMonth(), lastActivity.getDate());
+      const registrationDay = new Date(registrationDate.getFullYear(), registrationDate.getMonth(), registrationDate.getDate());
+
+      const userInfo = {
+        uid: authUser.uid,
+        name: userData.name,
+        lastActivity: lastActivity.toISOString(),
+        registrationDate: registrationDate.toISOString(),
+      };
+
+      if (lastActivityDay.getTime() === registrationDay.getTime()) {
+        inactiveUsers.push(userInfo);
+      } else {
+        activeUsers.push(userInfo);
+      }
+    });
+
+    console.log(`Active: ${activeUsers.length}, Inactive: ${inactiveUsers.length}`);
 
     return res.status(200).send({
       activeUsers,
-      dateRange: {
-        start: startOfDay.toISOString(),
-        end: endOfDay.toISOString(),
+      inactiveUsers,
+      summary: {
+        total: activeUsers.length + inactiveUsers.length,
+        active: activeUsers.length,
+        inactive: inactiveUsers.length,
       },
     });
   } catch (error) {
@@ -323,7 +397,7 @@ exports.getUsersByLoginDate = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.putNotificationUser = functions.https.onRequest(async (req, res) => {
+exports.putNotificationUser = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -803,7 +877,7 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * *")
   return null;
 });
 
-exports.sendNotificationEventFinish = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationEventFinish = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -1142,7 +1216,7 @@ exports.sendNotificationEventsReminderFavorite = functions.pubsub.schedule("0 12
   return null;
 });
 
-exports.sendNotificationNewMessage = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationNewMessage = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -1219,7 +1293,7 @@ exports.sendNotificationNewMessage = functions.https.onRequest(async (req, res) 
   }
 });
 
-exports.sendNotificationNewRequest = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationNewRequest = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -1559,7 +1633,7 @@ exports.sendNotificationCreateEvent = functions.pubsub.schedule("0 12 * * 1").on
 //   }
 // });
 
-exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationQuestionUser = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -1635,7 +1709,7 @@ exports.sendNotificationQuestionUser = functions.https.onRequest(async (req, res
   }
 });
 
-exports.sendNotificationAdmin = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationAdmin = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
   res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -1745,7 +1819,7 @@ exports.sendNotificationAdmin = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.createCustomAccount = functions.https.onCall(async (data, context) => {
+exports.createCustomAccount = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   try {
     const accountData = {
       type: "custom",
@@ -1768,11 +1842,11 @@ exports.createCustomAccount = functions.https.onCall(async (data, context) => {
     const account = await stripe.accounts.create(accountData);
     return {accountId: account.id};
   } catch (error) {
-    throw new functions.https.HttpsError("internal", error.message);
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
   }
 });
 
-exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
+exports.updateCustomAccount = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   try {
     const accountData = {
       individual: {
@@ -1824,18 +1898,18 @@ exports.updateCustomAccount = functions.https.onCall(async (data, context) => {
   }
 });
 
-exports.addCard = functions.https.onCall(async (data, context) => {
+exports.addCard = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   try {
     const card = await stripe.accounts.createExternalAccount(data.accountId, {
       external_account: data.token,
     });
     return {success: true, cardId: card.id};
   } catch (error) {
-    throw new functions.https.HttpsError("internal", error.message);
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
   }
 });
 
-exports.acceptTos = functions.https.onCall(async (data, context) => {
+exports.acceptTos = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   try {
     await stripe.accounts.update(data.accountId, {
       tos_acceptance: {
@@ -1845,11 +1919,11 @@ exports.acceptTos = functions.https.onCall(async (data, context) => {
     });
     return {success: true};
   } catch (error) {
-    throw new functions.https.HttpsError("internal", error.message);
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
   }
 });
 
-exports.uploadDocument = functions.https.onCall(async (data, context) => {
+exports.uploadDocument = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   try {
     const documentFile = await stripe.files.create({
       purpose: "identity_document",
@@ -1861,11 +1935,11 @@ exports.uploadDocument = functions.https.onCall(async (data, context) => {
     });
     return {fileId: documentFile.id};
   } catch (error) {
-    throw new functions.https.HttpsError("internal", error.message);
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
   }
 });
 
-exports.createTransfer = functions.https.onCall(async (data, context) => {
+exports.createTransfer = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   try {
     const transfer = await stripe.transfers.create({
       amount: data.amount,
@@ -1876,11 +1950,11 @@ exports.createTransfer = functions.https.onCall(async (data, context) => {
     return {transferId: transfer.id};
   } catch (error) {
     console.log("Transfer error:", error);
-    throw new functions.https.HttpsError("internal", error.message);
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
   }
 });
 
-exports.createPayout = functions.https.onCall(async (data, context) => {
+exports.createPayout = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   try {
     const payout = await stripe.payouts.create({
       amount: data.amount,
@@ -1890,11 +1964,11 @@ exports.createPayout = functions.https.onCall(async (data, context) => {
     });
     return {payoutId: payout.id};
   } catch (error) {
-    throw new functions.https.HttpsError("internal", error.message);
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
   }
 });
 
-exports.createPayoutDestination = functions.https.onCall(async (data, context) => {
+exports.createPayoutDestination = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   try {
     const payout = await stripe.payouts.create({
       amount: data.amount,
@@ -1905,11 +1979,11 @@ exports.createPayoutDestination = functions.https.onCall(async (data, context) =
     });
     return {payoutId: payout.id};
   } catch (error) {
-    throw new functions.https.HttpsError("internal", error.message);
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
   }
 });
 
-exports.getBankAccount = functions.https.onCall(async (data, context) => {
+exports.getBankAccount = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   try {
     const accountId = data.accountId;
 
@@ -1919,11 +1993,11 @@ exports.getBankAccount = functions.https.onCall(async (data, context) => {
 
     return {bankAccounts: bankAccounts.data};
   } catch (error) {
-    throw new functions.https.HttpsError("internal", error.message);
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
   }
 });
 
-exports.addBankAccount = functions.https.onCall(async (data, context) => {
+exports.addBankAccount = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   try {
     const accountId = data.accountId;
     const clabeNumber = data.clabeNumber;
@@ -1947,11 +2021,11 @@ exports.addBankAccount = functions.https.onCall(async (data, context) => {
 
     return {success: true, bankAccountId: bankAccount.id};
   } catch (error) {
-    throw new functions.https.HttpsError("internal", error.message);
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
   }
 });
 
-exports.createPaymentIntent = functions.https.onCall(async (data, context) => {
+exports.createPaymentIntent = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   try {
     const paymentIntent = await stripe.paymentIntents.create({
       amount: data.amount,
@@ -1964,11 +2038,11 @@ exports.createPaymentIntent = functions.https.onCall(async (data, context) => {
 
     return {success: true, clientSecret: paymentIntent.client_secret, id: paymentIntent.id};
   } catch (error) {
-    throw new functions.https.HttpsError("internal", error.message);
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
   }
 });
 
-exports.createPaymentIntentIos = functions.https.onCall(async (data, context) => {
+exports.createPaymentIntentIos = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   try {
     const {amount, currency} = data;
 
@@ -1989,11 +2063,11 @@ exports.createPaymentIntentIos = functions.https.onCall(async (data, context) =>
     return {success: true, paymentIntent: paymentIntent.client_secret, ephemeralKey: ephemeralKey.secret, customer: customer.id, paymentIntentId: paymentIntent.id};
   } catch (error) {
     console.error("Stripe error:", error);
-    throw new functions.https.HttpsError("internal", error.message);
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
   }
 });
 
-exports.sendNotificationAdminStrikes = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationAdminStrikes = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
   res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -2077,7 +2151,7 @@ exports.sendNotificationAdminStrikes = functions.https.onRequest(async (req, res
   }
 });
 
-exports.confirmPaymentIntent = functions.https.onRequest(async (req, res) => {
+exports.confirmPaymentIntent = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   try {
     const {paymentIntentId, token} = req.body;
 
@@ -2097,7 +2171,7 @@ exports.confirmPaymentIntent = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.appleCallbackHandler = functions.https.onRequest(async (req, res) => {
+exports.appleCallbackHandler = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   try {
     console.log("Request body:", req.body);
 
@@ -2113,7 +2187,7 @@ exports.appleCallbackHandler = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.eventClose = functions.https.onRequest(async (req, res) => {
+exports.eventClose = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -2184,15 +2258,15 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
     });
   }
 
-  // const {
-  //   eventId, participants, userId, tokensEvent, isSelling,
-  //   usersPaid, price, feeOption,
-  // } = body;
-
   const {
-    eventId, participants, userId, isSelling,
-    usersPaid,
+    eventId, participants, userId, tokensEvent, isSelling,
+    usersPaid, price, feeOption,
   } = body;
+
+  // const {
+  //   eventId, participants, userId, isSelling,
+  //   usersPaid,
+  // } = body;
 
   if (!Array.isArray(usersPaid) || !Array.isArray(participants)) {
     return res.status(400).send({
@@ -2206,89 +2280,89 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
   let batchOperations = 0;
 
   try {
-    // const dateFormatted = getFormattedDate();
-    // const gTokensPercentage = price * (feeOption / 100);
-    // let referralProcessedCount = 0;
+    const dateFormatted = getFormattedDate();
+    const gTokensPercentage = price * (feeOption / 100);
+    let referralProcessedCount = 0;
 
-    // const processReferralUser = async (paidUserId) => {
-    //   try {
-    //     const userDoc = await db.collection("user").doc(paidUserId).get();
+    const processReferralUser = async (paidUserId) => {
+      try {
+        const userDoc = await db.collection("user").doc(paidUserId).get();
 
-    //     if (!userDoc.exists) {
-    //       console.log(`User ${paidUserId} does not exist`);
-    //       return 0;
-    //     }
+        if (!userDoc.exists) {
+          console.log(`User ${paidUserId} does not exist`);
+          return 0;
+        }
 
-    //     const userData = userDoc.data();
-    //     const referredBy = userData.referredBy;
+        const userData = userDoc.data();
+        const referredBy = userData.referredBy;
 
-    //     if (!referredBy) return 0;
+        if (!referredBy) return 0;
 
-    //     const ref1Doc = await db.collection("user").doc(referredBy).get();
-    //     if (!ref1Doc.exists) return 0;
+        const ref1Doc = await db.collection("user").doc(referredBy).get();
+        if (!ref1Doc.exists) return 0;
 
-    //     console.log(`User ${referredBy} receives ${gTokensPercentage} tokens`);
+        console.log(`User ${referredBy} receives ${gTokensPercentage} tokens`);
 
-    //     if (batchOperations >= BATCH_SIZE - 10) {
-    //       await batch.commit();
-    //       batch = db.batch();
-    //       batchOperations = 0;
-    //     }
+        if (batchOperations >= BATCH_SIZE - 10) {
+          await batch.commit();
+          batch = db.batch();
+          batchOperations = 0;
+        }
 
-    //     const userRef = db.collection("user").doc(referredBy);
-    //     const level1Ref = userRef.collection("level1").doc(paidUserId);
-    //     const earningsRef = userRef.collection("earningsLevel1").doc(dateFormatted);
-    //     const mlmEarningsRef = db.collection("mlmEarnings").doc(dateFormatted);
-    //     const mlmTrackingRef = db.collection("mlmTracking").doc(paidUserId);
+        const userRef = db.collection("user").doc(referredBy);
+        const level1Ref = userRef.collection("level1").doc(paidUserId);
+        const earningsRef = userRef.collection("earningsLevel1").doc(dateFormatted);
+        const mlmEarningsRef = db.collection("mlmEarnings").doc(dateFormatted);
+        const mlmTrackingRef = db.collection("mlmTracking").doc(paidUserId);
 
-    //     batch.update(userRef, {
-    //       "earningsReferral.level1": FieldValue.increment(gTokensPercentage),
-    //       "earningsReferral.total": FieldValue.increment(gTokensPercentage),
-    //       "gTokens": FieldValue.increment(gTokensPercentage),
-    //       "transactionsReferral": FieldValue.arrayUnion({
-    //         "date": dateFormatted,
-    //         "amount": gTokensPercentage,
-    //         "type": "ticket_purchase",
-    //         "event": eventId,
-    //       }),
-    //     });
+        batch.update(userRef, {
+          "earningsReferral.level1": FieldValue.increment(gTokensPercentage),
+          "earningsReferral.total": FieldValue.increment(gTokensPercentage),
+          "gTokens": FieldValue.increment(gTokensPercentage),
+          "transactionsReferral": FieldValue.arrayUnion({
+            "date": dateFormatted,
+            "amount": gTokensPercentage,
+            "type": "ticket_purchase",
+            "event": eventId,
+          }),
+        });
 
-    //     batch.set(level1Ref, {
-    //       "amount": gTokensPercentage,
-    //       "userId": paidUserId,
-    //       "lastMove": FieldValue.serverTimestamp(),
-    //     }, {merge: true});
+        batch.set(level1Ref, {
+          "amount": gTokensPercentage,
+          "userId": paidUserId,
+          "lastMove": FieldValue.serverTimestamp(),
+        }, {merge: true});
 
-    //     batch.set(earningsRef, {
-    //       "earnings": FieldValue.increment(gTokensPercentage),
-    //     }, {merge: true});
+        batch.set(earningsRef, {
+          "earnings": FieldValue.increment(gTokensPercentage),
+        }, {merge: true});
 
-    //     batch.set(mlmEarningsRef, {
-    //       "earnings": FieldValue.increment(gTokensPercentage),
-    //       "dateEarnings": FieldValue.serverTimestamp(),
-    //     }, {merge: true});
+        batch.set(mlmEarningsRef, {
+          "earnings": FieldValue.increment(gTokensPercentage),
+          "dateEarnings": FieldValue.serverTimestamp(),
+        }, {merge: true});
 
-    //     batch.set(mlmTrackingRef, {
-    //       "lastMove": FieldValue.serverTimestamp(),
-    //       "level": 1,
-    //     }, {merge: true});
+        batch.set(mlmTrackingRef, {
+          "lastMove": FieldValue.serverTimestamp(),
+          "level": 1,
+        }, {merge: true});
 
-    //     batchOperations += 5;
-    //     return gTokensPercentage;
-    //   } catch (error) {
-    //     console.error(`Error processing user ${paidUserId}:`, error.message);
-    //     return 0;
-    //   }
-    // };
+        batchOperations += 5;
+        return gTokensPercentage;
+      } catch (error) {
+        console.error(`Error processing user ${paidUserId}:`, error.message);
+        return 0;
+      }
+    };
 
-    // console.log(`Processing ${usersPaid.length} referral users`);
-    // const referralResults = await processInChunks(
-    //     usersPaid,
-    //     CONCURRENT_LIMIT,
-    //     processReferralUser,
-    // );
+    console.log(`Processing ${usersPaid.length} referral users`);
+    const referralResults = await processInChunks(
+        usersPaid,
+        CONCURRENT_LIMIT,
+        processReferralUser,
+    );
 
-    // referralProcessedCount = referralResults.reduce((sum, amount) => sum + amount, 0);
+    referralProcessedCount = referralResults.reduce((sum, amount) => sum + amount, 0);
 
     if (batchOperations >= BATCH_SIZE - 5) {
       await batch.commit();
@@ -2304,17 +2378,17 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
     });
     batchOperations += 1;
 
-    // const gtokensTotal = isSelling ? (tokensEvent + 100) : tokensEvent;
+    const gtokensTotal = isSelling ? (tokensEvent + 100) : tokensEvent;
     const userRef = db.collection("user").doc(userId);
 
     batch.update(userRef, {
-      // gTokens: FieldValue.increment(gtokensTotal - referralProcessedCount),
+      gTokens: FieldValue.increment(gtokensTotal - referralProcessedCount),
       retentionGTokens: FieldValue.increment(isSelling ? -100 : 0),
       badgesCreated: participants.length == 0 ? FieldValue.increment(0) : FieldValue.increment(1),
     });
     batchOperations += 1;
 
-    // console.log(`User ${userId} tokens deducted: ${referralProcessedCount}`);
+    console.log(`User ${userId} tokens deducted: ${referralProcessedCount}`);
 
     const participantRefs = participants.map((path) => db.doc(path));
 
@@ -2369,7 +2443,7 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
   }
 });
 
-exports.validatePhoneNumber = functions.https.onRequest(async (req, res) => {
+exports.validatePhoneNumber = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -2450,7 +2524,7 @@ exports.getUserData = functions.runWith({memory: "1GB"}).https.onCall(async (dat
         .get();
 
     if (!userDoc.exists) {
-      throw new functions.https.HttpsError(
+      throw new functions.runWith({memory: "1GB"}).https.HttpsError(
           "not-found",
           "User document not found",
       );
@@ -2468,7 +2542,7 @@ exports.getUserData = functions.runWith({memory: "1GB"}).https.onCall(async (dat
     return sanitizedData;
   } catch (error) {
     console.error("Error retrieving user document:", error);
-    throw new functions.https.HttpsError(
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError(
         "internal",
         "Error processing request",
     );
@@ -2520,7 +2594,7 @@ exports.updateBanking = functions.firestore.document("user/{userId}").onUpdate(a
   return null;
 });
 
-exports.processReferral = functions.https.onCall(async (data, context) => {
+exports.processReferral = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   try {
     const details = data;
 
@@ -2763,7 +2837,7 @@ exports.updateAmbassadorRankings = functions.firestore.document("user/{userId}")
   return null;
 });
 
-exports.updateAmbassadorRankingsManual = functions.https.onCall(async (data, context) => {
+exports.updateAmbassadorRankingsManual = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   console.log("Starting manual update of ambassador rankings");
 
   const levels = ["level1", "level2", "level3", "level4"];
@@ -2777,7 +2851,7 @@ exports.updateAmbassadorRankingsManual = functions.https.onCall(async (data, con
   return {success: true, message: "Rankings updated correctly"};
 });
 
-exports.sendNotificationSendGift = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationSendGift = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST");
   res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -3184,7 +3258,7 @@ exports.sendNotificationProfileVerification = functions.pubsub.schedule("0 12 * 
   }
 });
 
-exports.sendNotificationProfileVerificationComplete = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationProfileVerificationComplete = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -3355,7 +3429,7 @@ exports.sendNotificationProfileVerificationComplete = functions.https.onRequest(
 //   }
 // });
 
-exports.sendNotificationPaymentSuccessful = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationPaymentSuccessful = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -3428,7 +3502,7 @@ exports.sendNotificationPaymentSuccessful = functions.https.onRequest(async (req
   }
 });
 
-exports.sendNotificationRewardEarned = functions.https.onRequest(async (req, res) => {
+exports.sendNotificationRewardEarned = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
   if (req.method !== "POST") {
     return res.status(405).send("Method not allowed");
   }
@@ -3653,7 +3727,7 @@ exports.validateAppleReceipt = functions.runWith({memory: "1GB"}).https.onCall(a
   const {receiptData, productId, transactionId} = data;
 
   if (!receiptData) {
-    throw new functions.https.HttpsError("invalid-argument", "Receipt data is required");
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError("invalid-argument", "Receipt data is required");
   }
 
   try {
@@ -3699,7 +3773,7 @@ exports.validateAppleReceipt = functions.runWith({memory: "1GB"}).https.onCall(a
     }
   } catch (error) {
     console.error("Error validating Apple receipt:", error);
-    throw new functions.https.HttpsError("internal", "Failed to validate receipt");
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", "Failed to validate receipt");
   }
 });
 
@@ -3765,12 +3839,12 @@ const androidPublisher = google.androidpublisher("v3");
  * @param {Object} context - Firebase callable context
  * @return {Promise<Object>} Validation result
  */
-exports.validateGooglePurchase = functions.https.onCall(async (data, context) => {
+exports.validateGooglePurchase = functions.runWith({memory: "1GB"}).https.onCall(async (data, context) => {
   const {purchaseToken, productId, packageName} = data;
 
   // Validate input
   if (!purchaseToken || !productId || !packageName) {
-    throw new functions.https.HttpsError(
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError(
         "invalid-argument",
         "Missing required parameters: purchaseToken, productId, packageName",
     );
@@ -3846,7 +3920,7 @@ exports.validateGooglePurchase = functions.https.onCall(async (data, context) =>
       };
     }
 
-    throw new functions.https.HttpsError(
+    throw new functions.runWith({memory: "1GB"}).https.HttpsError(
         "internal",
         "Error validating purchase: " + error.message,
     );
