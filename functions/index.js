@@ -3,13 +3,14 @@
 const admin = require("firebase-admin");
 const functions = require("firebase-functions");
 
-const stripe = require("stripe")(functions.config().stripe.secret);
+const Stripe = require("stripe");
+const stripe = new Stripe(process.env.STRIPE_SECRET || "placeholder");
 admin.initializeApp();
 
 const {FieldValue, Timestamp} = admin.firestore;
 
 const BATCH_SIZE = 500;
-// const CONCURRENT_LIMIT = 10;
+const CONCURRENT_LIMIT = 10;
 const LEVEL_CONFIG = {
   level0: {minParticipants: 3, taskIndex: 0},
   level1: {minParticipants: 3, taskIndex: 0},
@@ -3685,28 +3686,28 @@ async function updateAmbassadorTasks(userId, userData, participantCount) {
  * @param {Function} processor - Function to process each item in the array
  * @return {Promise<Array>} Promise that resolves to array of processed results
  */
-// async function processInChunks(array, chunkSize, processor) {
-//   const results = [];
-//   for (let i = 0; i < array.length; i += chunkSize) {
-//     const chunk = array.slice(i, i + chunkSize);
-//     console.log(chunk);
-//     console.log("chunk");
-//     const chunkResults = await Promise.all(chunk.map(processor));
-//     results.push(...chunkResults);
-//     console.log(results);
-//     console.log("results");
-//   }
-//   return results;
-// }
+async function processInChunks(array, chunkSize, processor) {
+  const results = [];
+  for (let i = 0; i < array.length; i += chunkSize) {
+    const chunk = array.slice(i, i + chunkSize);
+    console.log(chunk);
+    console.log("chunk");
+    const chunkResults = await Promise.all(chunk.map(processor));
+    results.push(...chunkResults);
+    console.log(results);
+    console.log("results");
+  }
+  return results;
+}
 
 /**
  * Gets current date formatted as YYYY-MM-DD string
  * @return {string} Formatted date string in YYYY-MM-DD format
  */
-// function getFormattedDate() {
-//   const now = new Date();
-//   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-// }
+function getFormattedDate() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
 
 // ==================== APPLE IN-APP PURCHASE VALIDATION ====================
 
@@ -3717,7 +3718,7 @@ const APPLE_SANDBOX_URL = "https://sandbox.itunes.apple.com/verifyReceipt";
 // Your App's Shared Secret from App Store Connect
 // Set with: firebase functions:config:set apple.shared_secret="YOUR_SECRET"
 const getAppleSharedSecret = () => {
-  return functions.config().apple?.shared_secret || process.env.APPLE_SHARED_SECRET || "";
+  return process.env.APPLE_SHARED_SECRET || "";
 };
 
 /**
