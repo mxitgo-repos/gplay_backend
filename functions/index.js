@@ -9,7 +9,7 @@ admin.initializeApp();
 const {FieldValue, Timestamp} = admin.firestore;
 
 const BATCH_SIZE = 500;
-// const CONCURRENT_LIMIT = 10;
+const CONCURRENT_LIMIT = 10;
 const LEVEL_CONFIG = {
   level0: {minParticipants: 3, taskIndex: 0},
   level1: {minParticipants: 3, taskIndex: 0},
@@ -1842,7 +1842,7 @@ exports.createCustomAccount = functions.runWith({memory: "1GB"}).https.onCall(as
     const account = await stripe.accounts.create(accountData);
     return {accountId: account.id};
   } catch (error) {
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
+    throw new functions.https.HttpsError("internal", error.message);
   }
 });
 
@@ -1905,7 +1905,7 @@ exports.addCard = functions.runWith({memory: "1GB"}).https.onCall(async (data, c
     });
     return {success: true, cardId: card.id};
   } catch (error) {
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
+    throw new functions.https.HttpsError("internal", error.message);
   }
 });
 
@@ -1919,7 +1919,7 @@ exports.acceptTos = functions.runWith({memory: "1GB"}).https.onCall(async (data,
     });
     return {success: true};
   } catch (error) {
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
+    throw new functions.https.HttpsError("internal", error.message);
   }
 });
 
@@ -1935,7 +1935,7 @@ exports.uploadDocument = functions.runWith({memory: "1GB"}).https.onCall(async (
     });
     return {fileId: documentFile.id};
   } catch (error) {
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
+    throw new functions.https.HttpsError("internal", error.message);
   }
 });
 
@@ -1950,7 +1950,7 @@ exports.createTransfer = functions.runWith({memory: "1GB"}).https.onCall(async (
     return {transferId: transfer.id};
   } catch (error) {
     console.log("Transfer error:", error);
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
+    throw new functions.https.HttpsError("internal", error.message);
   }
 });
 
@@ -1964,7 +1964,7 @@ exports.createPayout = functions.runWith({memory: "1GB"}).https.onCall(async (da
     });
     return {payoutId: payout.id};
   } catch (error) {
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
+    throw new functions.https.HttpsError("internal", error.message);
   }
 });
 
@@ -1979,7 +1979,7 @@ exports.createPayoutDestination = functions.runWith({memory: "1GB"}).https.onCal
     });
     return {payoutId: payout.id};
   } catch (error) {
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
+    throw new functions.https.HttpsError("internal", error.message);
   }
 });
 
@@ -1993,7 +1993,7 @@ exports.getBankAccount = functions.runWith({memory: "1GB"}).https.onCall(async (
 
     return {bankAccounts: bankAccounts.data};
   } catch (error) {
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
+    throw new functions.https.HttpsError("internal", error.message);
   }
 });
 
@@ -2021,7 +2021,7 @@ exports.addBankAccount = functions.runWith({memory: "1GB"}).https.onCall(async (
 
     return {success: true, bankAccountId: bankAccount.id};
   } catch (error) {
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
+    throw new functions.https.HttpsError("internal", error.message);
   }
 });
 
@@ -2038,7 +2038,7 @@ exports.createPaymentIntent = functions.runWith({memory: "1GB"}).https.onCall(as
 
     return {success: true, clientSecret: paymentIntent.client_secret, id: paymentIntent.id};
   } catch (error) {
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
+    throw new functions.https.HttpsError("internal", error.message);
   }
 });
 
@@ -2063,7 +2063,7 @@ exports.createPaymentIntentIos = functions.runWith({memory: "1GB"}).https.onCall
     return {success: true, paymentIntent: paymentIntent.client_secret, ephemeralKey: ephemeralKey.secret, customer: customer.id, paymentIntentId: paymentIntent.id};
   } catch (error) {
     console.error("Stripe error:", error);
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", error.message);
+    throw new functions.https.HttpsError("internal", error.message);
   }
 });
 
@@ -2263,11 +2263,6 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
     usersPaid, price, feeOption,
   } = body;
 
-  // const {
-  //   eventId, participants, userId, isSelling,
-  //   usersPaid,
-  // } = body;
-
   if (!Array.isArray(usersPaid) || !Array.isArray(participants)) {
     return res.status(400).send({
       error: "bad-request",
@@ -2422,7 +2417,7 @@ exports.eventFinish = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).ht
     console.log(`Event ${eventId} finished successfully`);
     return res.status(200).send({
       message: "Event finished successfully",
-      // referralProcessed: referralProcessedCount,
+      referralProcessed: referralProcessedCount,
     });
   } catch (error) {
     console.error("Error in eventFinish:", error);
@@ -2524,7 +2519,7 @@ exports.getUserData = functions.runWith({memory: "1GB"}).https.onCall(async (dat
         .get();
 
     if (!userDoc.exists) {
-      throw new functions.runWith({memory: "1GB"}).https.HttpsError(
+      throw new functions.https.HttpsError(
           "not-found",
           "User document not found",
       );
@@ -2542,7 +2537,7 @@ exports.getUserData = functions.runWith({memory: "1GB"}).https.onCall(async (dat
     return sanitizedData;
   } catch (error) {
     console.error("Error retrieving user document:", error);
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError(
+    throw new functions.https.HttpsError(
         "internal",
         "Error processing request",
     );
@@ -3685,28 +3680,28 @@ async function updateAmbassadorTasks(userId, userData, participantCount) {
  * @param {Function} processor - Function to process each item in the array
  * @return {Promise<Array>} Promise that resolves to array of processed results
  */
-// async function processInChunks(array, chunkSize, processor) {
-//   const results = [];
-//   for (let i = 0; i < array.length; i += chunkSize) {
-//     const chunk = array.slice(i, i + chunkSize);
-//     console.log(chunk);
-//     console.log("chunk");
-//     const chunkResults = await Promise.all(chunk.map(processor));
-//     results.push(...chunkResults);
-//     console.log(results);
-//     console.log("results");
-//   }
-//   return results;
-// }
+async function processInChunks(array, chunkSize, processor) {
+  const results = [];
+  for (let i = 0; i < array.length; i += chunkSize) {
+    const chunk = array.slice(i, i + chunkSize);
+    console.log(chunk);
+    console.log("chunk");
+    const chunkResults = await Promise.all(chunk.map(processor));
+    results.push(...chunkResults);
+    console.log(results);
+    console.log("results");
+  }
+  return results;
+}
 
 /**
  * Gets current date formatted as YYYY-MM-DD string
  * @return {string} Formatted date string in YYYY-MM-DD format
  */
-// function getFormattedDate() {
-//   const now = new Date();
-//   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-// }
+function getFormattedDate() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
 
 // ==================== APPLE IN-APP PURCHASE VALIDATION ====================
 
@@ -3727,7 +3722,7 @@ exports.validateAppleReceipt = functions.runWith({memory: "1GB"}).https.onCall(a
   const {receiptData, productId, transactionId} = data;
 
   if (!receiptData) {
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError("invalid-argument", "Receipt data is required");
+    throw new functions.https.HttpsError("invalid-argument", "Receipt data is required");
   }
 
   try {
@@ -3773,7 +3768,7 @@ exports.validateAppleReceipt = functions.runWith({memory: "1GB"}).https.onCall(a
     }
   } catch (error) {
     console.error("Error validating Apple receipt:", error);
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError("internal", "Failed to validate receipt");
+    throw new functions.https.HttpsError("internal", "Failed to validate receipt");
   }
 });
 
@@ -3844,7 +3839,7 @@ exports.validateGooglePurchase = functions.runWith({memory: "1GB"}).https.onCall
 
   // Validate input
   if (!purchaseToken || !productId || !packageName) {
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError(
+    throw new functions.https.HttpsError(
         "invalid-argument",
         "Missing required parameters: purchaseToken, productId, packageName",
     );
@@ -3920,7 +3915,7 @@ exports.validateGooglePurchase = functions.runWith({memory: "1GB"}).https.onCall
       };
     }
 
-    throw new functions.runWith({memory: "1GB"}).https.HttpsError(
+    throw new functions.https.HttpsError(
         "internal",
         "Error validating purchase: " + error.message,
     );
