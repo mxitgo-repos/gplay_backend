@@ -823,9 +823,35 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * *")
       };
 
       try {
+        const sanitizedEventId = eventId.toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+        const hostId = eventData.hostRef.id;
+
+        // Send notification to event attendees topic
         const response = await admin.messaging().send(message);
         console.log(`Notification successfully sent to the topic: ${eventId}: ${response}`);
 
+        // Send same notification to host topic
+        const hostMessage = {
+          ...message,
+          topic: `host_${sanitizedEventId}`,
+        };
+        const hostResponse = await admin.messaging().send(hostMessage);
+        console.log(`Notification successfully sent to host topic host_${sanitizedEventId}: ${hostResponse}`);
+
+        const notificationPayload = {
+          title: "Event Reminder!",
+          titleEsp: "¡Recordatorio de Evento!",
+          content: `Your event '${eventData.name}' is coming up soon! Are you ready for it?`,
+          contentEsp: `Tu evento '${eventData.name}' se acerca! ¿Estás listo?`,
+          notificationType: "4",
+          isRead: false,
+          date: Timestamp.now(),
+          image: eventData.photo,
+          eventId: eventId,
+          navigation: "eventdetail",
+        };
+
+        // Add notification to Firestore for attendees
         const usersRef = admin.firestore().collection("user")
             .where("attendedEventsRef", "array-contains", admin.firestore().doc(`event/${eventId}`));
 
@@ -846,21 +872,11 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * *")
           }
 
           const batch = admin.firestore().batch();
-          usersSnapshot.forEach((doc) => {
-            const userRef = doc.ref;
-            batch.update(userRef, {
+          usersSnapshot.forEach((userDoc) => {
+            batch.update(userDoc.ref, {
               notifications: admin.firestore.FieldValue.arrayUnion({
-                title: "Event Reminder!",
-                titleEsp: "¡Recordatorio de Evento!",
-                content: `Your event '${eventData.name}' is coming up soon! Are you ready for it?`,
-                contentEsp: `Tu evento '${eventData.name}' se acerca! ¿Estás listo?`,
-                notificationType: "4",
-                isRead: false,
-                date: Timestamp.now(),
-                image: eventData.photo,
-                eventId: eventId,
-                eventHost: eventData.hostRef.id,
-                navigation: "eventdetail",
+                ...notificationPayload,
+                eventHost: hostId,
               }),
             });
           });
@@ -869,7 +885,18 @@ exports.sendNotificationEventsReminder = functions.pubsub.schedule("0 12 * * *")
           lastDoc = usersSnapshot.docs[usersSnapshot.docs.length - 1];
         }
 
-        console.log("Notifications successfully added to user documents.");
+        console.log("Notifications successfully added to attendee documents.");
+
+        // Add notification to Firestore for host
+        const hostRef = admin.firestore().collection("user").doc(hostId);
+        await hostRef.update({
+          notifications: admin.firestore.FieldValue.arrayUnion({
+            ...notificationPayload,
+            eventHost: hostId,
+          }),
+        });
+
+        console.log(`Notification successfully added to host document: ${hostId}`);
       } catch (error) {
         console.error(`Error sending notification sendNotificationEventsReminder for event ${eventId}:`, error);
       }
