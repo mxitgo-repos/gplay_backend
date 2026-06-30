@@ -1,0 +1,44 @@
+rules_version = '2';
+
+// GPlay Firestore security rules — Task B3 (server-side access enforcement).
+//
+// NOT YET DEPLOYED. Review against the rules currently live in the Firebase
+// console before `firebase deploy --only firestore:rules` — the `event` and
+// `user` write rules below are placeholders that almost certainly need to be
+// reconciled with the existing app behavior, or the live app may lose writes.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // True iff the caller is a signed-in, non-anonymous, KYC-verified user.
+    function isVerified() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && exists(/databases/$(database)/documents/user/$(request.auth.uid))
+        && get(/databases/$(database)/documents/user/$(request.auth.uid)).data.kyc == true;
+    }
+
+    // Guest-safe public projection, maintained only by the eventPublicProjection trigger.
+    match /events_public/{eventId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Full event documents: readable only by verified users who have joined
+    // (free: in participantsRef) or paid (in usersPaid). Everyone else is denied
+    // the full doc and must read events_public / call getEventForViewer instead.
+    match /event/{eventId} {
+      allow read: if isVerified() && (
+        (resource.data.usersPaid != null
+          && request.auth.uid in resource.data.usersPaid)
+        || (resource.data.participantsRef != null
+          && /databases/$(database)/documents/user/$(request.auth.uid) in resource.data.participantsRef)
+      );
+
+      // TODO(reconcile with current console rules before deploying).
+      allow write: if request.auth != null;
+    }
+
+    // TODO(reconcile every other collection — user, mlm*, etc. — with the
+    // current console rules before deploying, or those reads/writes will break).
+  }
+}
