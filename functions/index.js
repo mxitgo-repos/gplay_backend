@@ -1,7 +1,10 @@
 /* eslint-disable no-undef */
 /* eslint-disable max-len */
 const admin = require("firebase-admin");
-const functions = require("firebase-functions");
+// firebase-functions v6+ no longer exposes the 1st-gen (v1) API from the package
+// root (it would make these triggers undefined). All exports here use the v1 API,
+// so import it explicitly. See https://firebase.google.com/docs/functions/beta/migrate-v1
+const functions = require("firebase-functions/v1");
 
 const Stripe = require("stripe");
 const stripe = new Stripe(process.env.STRIPE_SECRET || "placeholder");
