@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "g-play-dev-e4c4c"
+    "default": "g-play-dd31d",
+    "dev": "g-play-dd31d",
+    "prod": "g-play-dev-e4c4c"
   }
 }
