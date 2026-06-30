@@ -3927,3 +3927,392 @@ exports.validateGooglePurchase = functions.https.onCall(async (data, context) =>
     );
   }
 });
+
+// ==================== STRIPE TICKET PAYMENTS (§6) & EVENT ACCESS ENFORCEMENT (§1/§2/§3) ====================
+
+// G-Play's commission on a fiat ticket sale, as a fraction of priceCents.
+// TODO(confirm): set the real commission rate before production.
+const TICKET_COMMISSION_RATE = 0.10;
+
+// Stripe webhook signing secret (Dashboard > Developers > Webhooks).
+// Set in the function runtime: STRIPE_WEBHOOK_SECRET=whsec_...
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
+
+// The host user doc stores Stripe Connect account ids in an `accountId` array
+// (written by the app via arrayUnion); the active connected account is index 0
+// (the app uses `userModel.accountId![0]` for transfers). Confirmed against the
+// Flutter repo (user_model.dart, user_repository.dart#putAccountId).
+const HOST_STRIPE_ACCOUNT_FIELD = "accountId";
+
+/**
+ * Resolves a host's Stripe Connect (custom) account id from their user doc.
+ * @param {Object} hostRef - the event's hostRef (a Firestore DocumentReference).
+ * @return {Promise<string>} the host's Stripe connected-account id (acct_...).
+ */
+async function getHostConnectedAccountId(hostRef) {
+  if (!hostRef || typeof hostRef.get !== "function") {
+    throw new functions.https.HttpsError("failed-precondition", "This event has no host.");
+  }
+  const hostSnap = await hostRef.get();
+  if (!hostSnap.exists) {
+    throw new functions.https.HttpsError("failed-precondition", "The host account could not be found.");
+  }
+  const accounts = hostSnap.get(HOST_STRIPE_ACCOUNT_FIELD);
+  const accountId = Array.isArray(accounts) ? accounts.find((a) => a) : accounts;
+  if (!accountId) {
+    throw new functions.https.HttpsError("failed-precondition", "The host is not set up to receive payments yet.");
+  }
+  return accountId;
+}
+
+/**
+ * Idempotently fulfills a paid ticket purchase by joining the buyer to the
+ * event. Mirrors a free join (no G-Token deduction) and is safe to call
+ * multiple times (webhook + client confirm both firing -> exactly one join).
+ * @param {string} eventId - the event document id.
+ * @param {string} uid - the buyer's user id.
+ * @return {Promise<Object>} {fulfilled, alreadyJoined}.
+ */
+async function fulfillTicketPurchase(eventId, uid) {
+  const db = admin.firestore();
+  const eventRef = db.collection("event").doc(eventId);
+  const userRef = db.collection("user").doc(uid);
+
+  return db.runTransaction(async (tx) => {
+    const eventSnap = await tx.get(eventRef);
+    if (!eventSnap.exists) {
+      throw new functions.https.HttpsError("not-found", "Event not found.");
+    }
+    const usersPaid = eventSnap.get("usersPaid") || [];
+    if (usersPaid.includes(uid)) {
+      return {fulfilled: false, alreadyJoined: true};
+    }
+    tx.update(eventRef, {
+      usersPaid: FieldValue.arrayUnion(uid),
+      participantsRef: FieldValue.arrayUnion(userRef),
+      currentCountSelling: FieldValue.increment(1),
+    });
+    tx.update(userRef, {
+      attendedEventsRef: FieldValue.arrayUnion(eventRef),
+    });
+    return {fulfilled: true, alreadyJoined: false};
+  });
+}
+
+/**
+ * Computes a coarse, guest-safe date (local midnight) from an event start
+ * Timestamp so exact times are never exposed for paid events.
+ * @param {Object} startDate - the event start time (a Firestore Timestamp).
+ * @return {Object|null} the date rounded down to the day (a Timestamp) or null.
+ */
+function generalDateOf(startDate) {
+  if (!startDate || typeof startDate.toDate !== "function") return null;
+  const d = startDate.toDate();
+  return Timestamp.fromDate(new Date(d.getFullYear(), d.getMonth(), d.getDate()));
+}
+
+/**
+ * Maps a paid event price to a guest-safe bracket descriptor.
+ * @param {string} currency - "MXN" or "USD".
+ * @param {number} priceCents - price in minor units.
+ * @return {Object} fields to merge into a public/guest projection.
+ */
+function priceBracketFor(currency, priceCents) {
+  if (currency === "USD") {
+    return {priceBracket: "exactUsd", priceUsdCents: priceCents};
+  }
+  // MXN brackets: 200 MXN = 20000 cents, 500 MXN = 50000 cents.
+  if (priceCents < 20000) return {priceBracket: "under200Mxn"};
+  if (priceCents <= 50000) return {priceBracket: "between200And500Mxn"};
+  return {priceBracket: "over500Mxn"};
+}
+
+// -------------------- TASK A: Stripe ticket payments --------------------
+
+// A1. Create a PaymentIntent (Connect destination charge) for a fiat ticket.
+exports.createTicketPaymentIntent = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "You must be signed in to buy a ticket.");
+  }
+  const uid = context.auth.uid;
+  const provider = context.auth.token && context.auth.token.firebase && context.auth.token.firebase.sign_in_provider;
+  if (provider === "anonymous") {
+    throw new functions.https.HttpsError("permission-denied", "Please create an account to buy tickets.");
+  }
+
+  const {eventId} = data || {};
+  if (!eventId) {
+    throw new functions.https.HttpsError("invalid-argument", "Missing eventId.");
+  }
+
+  const db = admin.firestore();
+
+  const userSnap = await db.collection("user").doc(uid).get();
+  if (!userSnap.exists || userSnap.get("kyc") !== true) {
+    throw new functions.https.HttpsError("permission-denied", "Your account must be verified to buy tickets.");
+  }
+
+  const eventSnap = await db.collection("event").doc(eventId).get();
+  if (!eventSnap.exists) {
+    throw new functions.https.HttpsError("not-found", "Event not found.");
+  }
+  const event = eventSnap.data();
+
+  if (event.isSelling !== true) {
+    throw new functions.https.HttpsError("failed-precondition", "This event is not selling tickets.");
+  }
+  if (!event.currency) {
+    // Legacy G-Token event (Q5) or free event: not purchasable with money.
+    throw new functions.https.HttpsError("failed-precondition", "This event cannot be purchased.");
+  }
+  const priceCents = event.priceCents;
+  if (typeof priceCents !== "number" || priceCents <= 0) {
+    throw new functions.https.HttpsError("failed-precondition", "This event has no valid price.");
+  }
+  if (typeof event.countSelling === "number" && (event.currentCountSelling || 0) >= event.countSelling) {
+    throw new functions.https.HttpsError("failed-precondition", "This event is sold out.");
+  }
+  if ((event.usersPaid || []).includes(uid)) {
+    throw new functions.https.HttpsError("already-exists", "You already have a ticket for this event.");
+  }
+
+  const hostAccountId = await getHostConnectedAccountId(event.hostRef);
+  const applicationFee = Math.round(priceCents * TICKET_COMMISSION_RATE);
+  const currencyLower = String(event.currency).toLowerCase();
+
+  try {
+    const customer = await stripe.customers.create({metadata: {uid}});
+    const ephemeralKey = await stripe.ephemeralKeys.create(
+        {customer: customer.id},
+        {apiVersion: "2023-10-16"},
+    );
+    const paymentIntent = await stripe.paymentIntents.create(
+        {
+          amount: priceCents,
+          currency: currencyLower,
+          customer: customer.id,
+          automatic_payment_methods: {enabled: true, allow_redirects: "never"},
+          application_fee_amount: applicationFee,
+          transfer_data: {destination: hostAccountId},
+          metadata: {eventId, uid},
+        },
+        {idempotencyKey: `${eventId}:${uid}`},
+    );
+
+    return {
+      clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id,
+      amount: priceCents,
+      currency: event.currency,
+      customerId: customer.id,
+      ephemeralKeySecret: ephemeralKey.secret,
+    };
+  } catch (error) {
+    if (error instanceof functions.https.HttpsError) throw error;
+    console.error("createTicketPaymentIntent error:", error);
+    throw new functions.https.HttpsError("internal", error.message);
+  }
+});
+
+// A2. Stripe webhook: the source of truth for ticket fulfillment.
+exports.stripeWebhook = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
+  let stripeEvent;
+  try {
+    const signature = req.headers["stripe-signature"];
+    stripeEvent = stripe.webhooks.constructEvent(req.rawBody, signature, STRIPE_WEBHOOK_SECRET);
+  } catch (error) {
+    console.error("Stripe webhook signature verification failed:", error.message);
+    return res.status(400).send(`Webhook Error: ${error.message}`);
+  }
+
+  try {
+    if (stripeEvent.type === "payment_intent.succeeded") {
+      const paymentIntent = stripeEvent.data.object;
+      const {eventId, uid} = paymentIntent.metadata || {};
+      if (eventId && uid) {
+        const result = await fulfillTicketPurchase(eventId, uid);
+        console.log("stripeWebhook fulfilled:", eventId, uid, result);
+      } else {
+        console.warn("payment_intent.succeeded missing eventId/uid metadata:", paymentIntent.id);
+      }
+    }
+  } catch (error) {
+    console.error("stripeWebhook handler error:", error);
+    // Non-2xx -> Stripe retries; fulfillTicketPurchase is idempotent so retries are safe.
+    return res.status(500).send("Handler error");
+  }
+
+  return res.status(200).send({received: true});
+});
+
+// A3. Client-side fallback the app calls right after the PaymentSheet succeeds.
+exports.confirmTicketPurchase = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "You must be signed in.");
+  }
+  const uid = context.auth.uid;
+  const {eventId, paymentIntentId} = data || {};
+  if (!eventId || !paymentIntentId) {
+    throw new functions.https.HttpsError("invalid-argument", "Missing eventId or paymentIntentId.");
+  }
+
+  try {
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    if (paymentIntent.status !== "succeeded") {
+      throw new functions.https.HttpsError("failed-precondition", "Payment has not completed.");
+    }
+    if (paymentIntent.metadata && (paymentIntent.metadata.uid !== uid || paymentIntent.metadata.eventId !== eventId)) {
+      throw new functions.https.HttpsError("permission-denied", "Payment does not match this purchase.");
+    }
+    const result = await fulfillTicketPurchase(eventId, uid);
+    return {success: true, alreadyJoined: result.alreadyJoined};
+  } catch (error) {
+    if (error instanceof functions.https.HttpsError) throw error;
+    console.error("confirmTicketPurchase error:", error);
+    throw new functions.https.HttpsError("internal", error.message);
+  }
+});
+
+// -------------------- TASK B: Server-side access enforcement --------------------
+
+// B1. Maintain a guest-safe public mirror of each event in events_public/{eventId}.
+exports.eventPublicProjection = functions.firestore.document("event/{eventId}").onWrite(async (change, context) => {
+  const eventId = context.params.eventId;
+  const publicRef = admin.firestore().collection("events_public").doc(eventId);
+
+  // Deleted event -> remove the mirror.
+  if (!change.after.exists) {
+    await publicRef.delete().catch(() => {});
+    return null;
+  }
+
+  const event = change.after.data();
+  const isPaid = event.isSelling === true && !!event.currency;
+  const isLegacyGToken = event.isSelling === true && !event.currency; // Q5: hide.
+  const hidden = isLegacyGToken || event.isClose === true || event.isPrivate === true || event.isEnd === true;
+
+  // Exclude the whole doc for hidden/legacy/closed/private/ended events.
+  if (hidden) {
+    await publicRef.delete().catch(() => {});
+    return null;
+  }
+
+  const publicDoc = {
+    name: event.name || null,
+    photo: event.photo || null,
+    mood: event.mood || null,
+    attendeeCount: Array.isArray(event.participantsRef) ? event.participantsRef.length : 0,
+    generalDate: generalDateOf(event.startDate),
+    isSelling: event.isSelling === true,
+    currency: event.currency || null,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+
+  if (isPaid && typeof event.priceCents === "number") {
+    // Paid events: guests see only a price bracket, never exact time/description.
+    Object.assign(publicDoc, priceBracketFor(event.currency, event.priceCents));
+  } else {
+    // Free events: guests may see exact time + full description (§3 matrix).
+    publicDoc.startDate = event.startDate || null;
+    publicDoc.endDate = event.endDate || null;
+    publicDoc.bio = event.bio || null;
+  }
+
+  await publicRef.set(publicDoc);
+  return null;
+});
+
+// B2. Level-aware event read for the registered tier (rules can't field-filter).
+exports.getEventForViewer = functions.https.onCall(async (data, context) => {
+  const {eventId} = data || {};
+  if (!eventId) {
+    throw new functions.https.HttpsError("invalid-argument", "Missing eventId.");
+  }
+
+  const db = admin.firestore();
+  const eventSnap = await db.collection("event").doc(eventId).get();
+  if (!eventSnap.exists) {
+    throw new functions.https.HttpsError("not-found", "Event not found.");
+  }
+  const event = eventSnap.data();
+
+  // Q5: legacy G-Token paid events are hidden everywhere.
+  if (event.isSelling === true && !event.currency) {
+    throw new functions.https.HttpsError("not-found", "Event not found.");
+  }
+  const isPaid = event.isSelling === true && !!event.currency;
+
+  // Compute the viewer's access level.
+  let level = "guest";
+  let uid = null;
+  if (context.auth) {
+    const provider = context.auth.token && context.auth.token.firebase && context.auth.token.firebase.sign_in_provider;
+    if (provider !== "anonymous") {
+      uid = context.auth.uid;
+      const userSnap = await db.collection("user").doc(uid).get();
+      level = userSnap.exists && userSnap.get("kyc") === true ? "verified" : "registered";
+    }
+  }
+
+  const participantIds = Array.isArray(event.participantsRef) ? event.participantsRef.map((r) => r.id) : [];
+  const usersPaid = Array.isArray(event.usersPaid) ? event.usersPaid : [];
+  const hasAccess = level === "verified" && !!uid && (participantIds.includes(uid) || usersPaid.includes(uid));
+
+  const gd = generalDateOf(event.startDate);
+  const isGuest = level === "guest";
+  const isRegisteredOrUp = level === "registered" || level === "verified";
+
+  // Base projection visible to every level (incl. guests): name, category/vibe,
+  // attendee count, general date, image. Image URL is exposed at all levels (the
+  // app blurs it for guests).
+  const projection = {
+    id: eventId,
+    name: event.name || null,
+    mood: event.mood || null,
+    photo: event.photo || null,
+    attendeeCount: participantIds.length,
+    generalDate: gd ? gd.toMillis() : null,
+    isSelling: event.isSelling === true,
+    currency: event.currency || null,
+  };
+  // Paid events: every level sees a price bracket; registered+ also gets exact price.
+  if (isPaid && typeof event.priceCents === "number") {
+    Object.assign(projection, priceBracketFor(event.currency, event.priceCents));
+    if (isRegisteredOrUp) {
+      projection.priceCents = event.priceCents;
+    }
+  }
+
+  // Exact time + full description: hidden ONLY from guests on PAID events.
+  // (Guests on free events may see them per the §3 matrix.)
+  if (!isPaid || !isGuest) {
+    projection.startDate = event.startDate ? event.startDate.toMillis() : null;
+    projection.endDate = event.endDate ? event.endDate.toMillis() : null;
+    projection.bio = event.bio || null;
+  }
+
+  // Partial attendee list: registered and verified (not guests).
+  if (isRegisteredOrUp) {
+    projection.participants = participantIds.slice(0, 10);
+  }
+
+  // Verified + joined/paid: full access (address, benefits, chat, full list).
+  if (hasAccess) {
+    if (event.location && event.location.geopoint) {
+      projection.location = {
+        latitude: event.location.geopoint.latitude,
+        longitude: event.location.geopoint.longitude,
+        geohash: event.location.geohash || null,
+      };
+    }
+    projection.locationName = event.locationName || null;
+    projection.benefits = event.benefits || null;
+    projection.participants = participantIds;
+    projection.usersPaid = usersPaid;
+    if (event.chatRef && event.chatRef.path) {
+      projection.chatRef = event.chatRef.path;
+    }
+  }
+
+  return {level, hasAccess: hasAccess, event: projection};
+});
