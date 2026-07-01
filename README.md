@@ -83,12 +83,43 @@ firebase emulators:start --only functions   # levanta las functions localmente
 firebase functions:shell                     # shell interactivo para invocarlas
 ```
 
-## Deploy
+## Estrategia de branches y despliegue
 
-> El deploy ejecuta `npm run lint` (ESLint) como hook de *predeploy*; si el lint falla, el
-> deploy se aborta. Corre `npm run lint` antes para detectar errores.
+El despliegue es **automático vía GitHub Actions**: cada branch de larga vida está atada a un
+entorno y al hacer merge se dispara el deploy correspondiente.
+
+```
+feature/* ──PR──▶ development ──(merge)──▶ GitHub Action ──▶ DEV  (g-play-dd31d)
+                       │
+                       └──PR "release"──▶ main ──(merge)──▶ GitHub Action ──▶ PROD (g-play-dev-e4c4c)
+```
+
+| Branch        | Entorno                    | Workflow                             |
+| ------------- | -------------------------- | ------------------------------------ |
+| `development` | **DEV** (`g-play-dd31d`)   | `.github/workflows/deploy-dev.yml`   |
+| `main`        | **PROD** (`g-play-dev-e4c4c`) | `.github/workflows/deploy-prod.yml` |
+
+Flujo de trabajo:
+1. Crea un branch `feature/*` (o `fix/*`, `chore/*`) **desde `development`**.
+2. Abre un PR hacia `development`. Al hacer merge se despliega a **DEV** automáticamente.
+3. Prueba en DEV (ver *smoke tests* más abajo y la app).
+4. Para llevar a producción: abre un PR de **`development` → `main`**. El merge despliega a **PROD**.
+
+Reglas: **no hagas push directo** a `development` ni a `main` (protégelas en GitHub);
+`main` siempre refleja lo que está en producción.
+
+> 📖 Configuración detallada (service accounts, secrets de GitHub, protección de branches y el
+> **primer despliegue a PROD** — que es una migración especial) en
+> [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). **Léelo antes del primer deploy a producción.**
+
+## Deploy manual (fallback)
+
+Solo si CI no está disponible. El deploy ejecuta `npm run lint` (ESLint) como hook de
+*predeploy*; si el lint falla, el deploy se aborta.
 
 ```bash
+nvm use   # Node 22
+
 # Todas las functions (al DEV, que es el default)
 firebase deploy --only functions
 
