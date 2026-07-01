@@ -4,6 +4,9 @@ Backend de **Firebase Cloud Functions** para GPlay. Todo el código vive en un �
 [`functions/index.js`](functions/index.js) (JavaScript, sin paso de build). Esta guía cubre la
 instalación y el despliegue.
 
+**Stack:** Node.js 22 · `firebase-functions` v7 · `firebase-admin` v13 · funciones de 1ª gen
+(us-central1).
+
 ## Requisitos previos
 
 - **Node.js 22** — el runtime de las functions está fijado a la versión 22
@@ -113,3 +116,34 @@ firebase deploy --only firestore:rules
 ```bash
 firebase functions:log            # tail de logs (npm run logs)
 ```
+
+## Verificar el despliegue (smoke tests)
+
+No hay suite de tests unitarios. Para confirmar que las functions responden tras un deploy
+hay una colección de Postman en
+[`docs/gplay-dev.postman_collection.json`](docs/gplay-dev.postman_collection.json)
+(solo peticiones **de lectura**). Impórtala en Postman (**Import** → selecciona el archivo).
+
+- **`checkEmail`** es el mejor chequeo de salud: cualquier email devuelve un `200` limpio y
+  ejercita `admin.auth()` + Firestore. Ejemplo con `curl`:
+
+  ```bash
+  curl -s -X POST https://us-central1-g-play-dd31d.cloudfunctions.net/checkEmail \
+    -H "Content-Type: application/json" \
+    -d '{"email":"test@example.com"}'
+  # → {"exists":false,"existsInAuth":false,"existsInFirestore":false}
+  ```
+
+- Cambia la variable `baseUrl` de la colección a
+  `https://us-central1-g-play-dev-e4c4c.cloudfunctions.net` para probar PROD.
+
+## Solución de problemas (deploy)
+
+- **`Cannot read properties of undefined (reading 'stdin')` en el predeploy** → npm 11 rompe
+  el hook por defecto de Firebase. Ya está resuelto en [`firebase.json`](firebase.json)
+  (`npm run lint --prefix …`). Usa Node 22 (`nvm use`) para deployar.
+- **`nvm use` no cambia de versión** y avisa de `prefix`/`globalconfig` en `~/.npmrc` →
+  quita esa clave: `npm config delete prefix --location=user` (y `globalconfig` si existe).
+- **`npm ci ... ERESOLVE` / lockfile fuera de sync en Cloud Build** → Cloud Build corre
+  `npm ci` de forma estricta. Regenera el lock con un `npm install` normal (sin `--omit=dev`)
+  y valida en local con **`npm ci`** (no solo `--dry-run`) antes de deployar.
