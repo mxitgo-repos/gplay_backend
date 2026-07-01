@@ -43,10 +43,13 @@ firebase functions:log                       # tail logs (npm run logs)
   [docs/gplay-dev.postman_collection.json](docs/gplay-dev.postman_collection.json)
   (read-only requests; `checkEmail` is the best health check — a clean `200` proves
   `admin.auth()` + Firestore work).
-- **A bare deploy ships to DEV.** [.firebaserc](.firebaserc) aliases `default` and `dev` →
-  `g-play-dd31d` (the **DEV** project) and `prod` → `g-play-dev-e4c4c` (the **PROD** project,
-  despite its `-dev-` id). Deploy to prod explicitly with `firebase deploy --only functions
-  --project prod`; verify the active target with `firebase use` first.
+- **Deploys are CI/CD-driven.** Merging to `development` auto-deploys to **DEV**
+  (`g-play-dd31d`); merging to `main` auto-deploys to **PROD** (`g-play-dev-e4c4c`) — via
+  `.github/workflows/deploy-{dev,prod}.yml`. Feature branches → PR into `development`; promote
+  with a `development` → `main` PR. Full strategy + first-prod cutover in
+  [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Manual fallback (verify target with `firebase use`
+  first): [.firebaserc](.firebaserc) aliases `default`/`dev` → DEV and `prod` → PROD, so
+  `firebase deploy --only functions` hits DEV and `--project prod` hits PROD.
 - Node runtime is pinned to **22** (`functions/package.json` engines + repo-root
   [.nvmrc](.nvmrc)) — the newest runtime Firebase-managed Cloud Functions supports (Node 24
   is *not* deployable here). No region is set, so functions deploy to the default

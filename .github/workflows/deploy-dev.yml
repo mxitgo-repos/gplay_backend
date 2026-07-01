@@ -1,0 +1,51 @@
+name: Deploy Functions — DEV
+
+# Auto-deploys the Cloud Functions to the DEV project (g-play-dd31d) whenever
+# development changes. Can also be run manually from the Actions tab.
+on:
+  push:
+    branches: [development]
+    paths:
+      - "functions/**"
+      - "firebase.json"
+      - ".firebaserc"
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Lint
+        working-directory: functions
+        run: npm run lint
+
+      - name: Write functions/.env (DEV secrets)
+        working-directory: functions
+        run: |
+          cat > .env <<'EOF'
+          STRIPE_SECRET=${{ secrets.DEV_STRIPE_SECRET }}
+          STRIPE_WEBHOOK_SECRET=${{ secrets.DEV_STRIPE_WEBHOOK_SECRET }}
+          APPLE_SHARED_SECRET=${{ secrets.DEV_APPLE_SHARED_SECRET }}
+          EOF
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.DEV_FIREBASE_SA_KEY }}
+
+      - name: Deploy to DEV
+        run: npx firebase-tools deploy --only functions --project dev --non-interactive
