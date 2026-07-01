@@ -36,9 +36,13 @@ firebase deploy --only functions:createPaymentIntent   # deploy a single functio
 firebase functions:log                       # tail logs (npm run logs)
 ```
 
-- There is **no test suite**. (`firebase-functions-test` was removed as an unused
+- There is **no unit-test suite**. (`firebase-functions-test` was removed as an unused
   devDependency — its peer deps blocked `firebase-admin` v13 and it dragged in a large
-  jest tree. Re-add it *with* `jest` if you ever write tests.)
+  jest tree. Re-add it *with* `jest` if you ever write tests.) For post-deploy sanity
+  checks there is a **Postman smoke-test collection** at
+  [docs/gplay-dev.postman_collection.json](docs/gplay-dev.postman_collection.json)
+  (read-only requests; `checkEmail` is the best health check — a clean `200` proves
+  `admin.auth()` + Firestore work).
 - **A bare deploy ships to DEV.** [.firebaserc](.firebaserc) aliases `default` and `dev` →
   `g-play-dd31d` (the **DEV** project) and `prod` → `g-play-dev-e4c4c` (the **PROD** project,
   despite its `-dev-` id). Deploy to prod explicitly with `firebase deploy --only functions
