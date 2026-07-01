@@ -1,0 +1,106 @@
+{
+  "info": {
+    "name": "GPlay Backend — DEV smoke tests",
+    "description": "Read-only smoke tests for the GPlay Cloud Functions on the DEV project (g-play-dd31d). Purpose: confirm the deployed functions respond correctly after the Node 22 + firebase-functions v7 / firebase-admin v13 upgrade. All requests here are READ-ONLY (no writes, no notifications, no charges).\n\nSwitch the {{baseUrl}} collection variable to the prod URL to test PROD instead.\n\nFunction types:\n- onRequest: plain HTTP. POST + JSON body. Not auth-gated. (checkEmail, getUsersByLoginDate)\n- onCall: Firebase 'callable' protocol. Body MUST be wrapped as {\"data\": {...}} and the response is wrapped as {\"result\": ...}. Most onCall functions require a Firebase Auth token; getUserData does not. (getUserData)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://us-central1-g-play-dd31d.cloudfunctions.net",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "checkEmail (onRequest) — BEST health check",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Healthy = HTTP 200 with an 'exists' boolean. This proves admin.auth()",
+              "// and admin.firestore() both work under firebase-admin v13.",
+              "pm.test('status is 200', () => pm.response.to.have.status(200));",
+              "pm.test('body has exists flag', () => {",
+              "  const b = pm.response.json();",
+              "  pm.expect(b).to.have.property('exists');",
+              "});",
+              "console.log('checkEmail response:', pm.response.text());"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": {"raw": "{{baseUrl}}/checkEmail", "host": ["{{baseUrl}}"], "path": ["checkEmail"]},
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"smoketest-doesnotexist@example.com\"\n}"
+        },
+        "description": "Checks whether an email is already registered (Firebase Auth + Firestore 'user' collection). Use any email — an unused one returns {\"exists\": false, ...}. Required field: email. Optional: userId (to exclude a user from the check)."
+      }
+    },
+    {
+      "name": "getUsersByLoginDate (onRequest) — Firestore read",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Healthy = HTTP 200 (a JSON payload of users). Proves Firestore",
+              "// paginated queries work under the new SDK.",
+              "pm.test('status is 200', () => pm.response.to.have.status(200));",
+              "console.log('getUsersByLoginDate returned', pm.response.text().length, 'bytes');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": {"raw": "{{baseUrl}}/getUsersByLoginDate", "host": ["{{baseUrl}}"], "path": ["getUsersByLoginDate"]},
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"startDate\": null,\n  \"endDate\": null\n}"
+        },
+        "description": "Returns users from the 'user' collection (paginated). Optional body fields startDate / endDate (ISO strings) to filter by login date; null returns all. Read-only."
+      }
+    },
+    {
+      "name": "getUserData (onCall) — callable protocol example",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// This demonstrates the CALLABLE protocol: request body is {\"data\": {...}},",
+              "// success response is {\"result\": ...}, errors are {\"error\": {...}}.",
+              "// With a made-up documentId you'll get an error response (expected) —",
+              "// that still proves the function loaded and ran. With a REAL user doc id",
+              "// you'll get {\"result\": {...userData}}.",
+              "pm.test('got a JSON response (function is alive)', () => {",
+              "  pm.expect(() => pm.response.json()).to.not.throw();",
+              "});",
+              "console.log('getUserData response:', pm.response.text());"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": {"raw": "{{baseUrl}}/getUserData", "host": ["{{baseUrl}}"], "path": ["getUserData"]},
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"data\": {\n    \"documentId\": \"REPLACE_WITH_A_REAL_USER_DOC_ID\"\n  }\n}"
+        },
+        "description": "onCall function. NOTE the {\"data\": {...}} envelope — callables require it. Replace documentId with a real doc id from the 'user' collection (Firebase console → Firestore → user) to get actual data back. A fake id returns an error response, which still confirms the function runs. Unlike most onCall functions here, this one does NOT require an auth token."
+      }
+    }
+  ]
+}
