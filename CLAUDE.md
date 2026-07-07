@@ -11,6 +11,8 @@ Stripe payments & Connect payouts (host onboarding, ticket charges), push notifi
 
 > **Plain JavaScript, not TypeScript.** All function code lives in a single file,
 > [functions/index.js](functions/index.js). There is no build step and no `src/` or `lib/`.
+> The repo-root `index.js` / `package.json` (`"testfunc"`) / `package-lock.json` are
+> vestigial scraps — only `functions/` is deployed (see `firebase.json`).
 > The `functions-repo-CLAUDE.starter.md` doc under [docs/](docs/) describes a *planned*
 > TypeScript / `src/`-style layout that **does not match this repo** — ignore its layout/
 > language claims; only its contract details matter.
@@ -57,8 +59,16 @@ firebase functions:log                       # tail logs (npm run logs)
   admin v14 would need `--legacy-peer-deps`). Functions v6+ dropped the v1 namespace from
   the package root, so [index.js](functions/index.js) imports it via
   `require("firebase-functions/v1")` — keep that, or every 1st-gen trigger becomes `undefined`.
-- Secrets live in `functions/.env` (gitignored, per-project) — create it manually;
-  [README.md](README.md) lists the prod/dev `STRIPE_SECRET` and `APPLE_SHARED_SECRET` values.
+- Secrets are env vars: `STRIPE_SECRET`, `STRIPE_WEBHOOK_SECRET`, `APPLE_SHARED_SECRET`
+  (documented in [README.md](README.md); the *values* are not in the repo — get them from
+  the team / Stripe / App Store Connect; DEV uses `sk_test_…`, PROD `sk_live_…`).
+  **Deployed values come from GitHub Actions repo secrets** (`DEV_*` / `PROD_*` prefixes) —
+  each deploy workflow writes `functions/.env` just before deploying. A local
+  `functions/.env` (gitignored) is only needed for the emulator or a manual deploy, and it
+  must live in `functions/`, not the repo root — the Firebase CLI ignores a root `.env`.
+- `node-fetch` v3 is ESM-only, so `validateAppleReceipt` loads it via dynamic
+  `await import("node-fetch")` — don't convert it to a top-level `require` (it would crash
+  on load). `jsonwebtoken` / `jwks-rsa` are declared in `package.json` but currently unused.
 
 ## Architecture
 
@@ -140,9 +150,9 @@ live console rules first, or the app loses reads/writes.
 
 - **Style:** `eslint-config-google`, double quotes, `max-len` disabled file-wide, arrow
   callbacks preferred. Run `npm run lint` before deploying (it is a predeploy gate).
-- **Secrets** come from environment variables (`STRIPE_SECRET`, `APPLE_SHARED_SECRET`) — set
-  them in the function runtime, never hardcode or commit. The `"placeholder"` fallback for
-  Stripe exists only so the module loads in environments without the secret.
+- **Secrets** come from environment variables (`STRIPE_SECRET`, `STRIPE_WEBHOOK_SECRET`,
+  `APPLE_SHARED_SECRET`) — set them in the function runtime, never hardcode or commit. The
+  `"placeholder"` fallback for Stripe exists only so the module loads without the secret.
 - **Callables** return plain objects; on failure they often return `{success: false, message}`
   rather than throwing — match the surrounding function's style when extending it.
 - **`onRequest`** functions must echo the CORS headers and short-circuit `OPTIONS` with 204,
