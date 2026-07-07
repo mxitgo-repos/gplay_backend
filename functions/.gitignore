@@ -1,2 +1,3 @@
 node_modules/
 *.local
+# CI smoke test: trivial change under functions/ to trigger deploy-dev.yml
