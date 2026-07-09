@@ -4078,7 +4078,15 @@ exports.createTicketPaymentIntent = functions.https.onCall(async (data, context)
   const db = admin.firestore();
 
   const userSnap = await db.collection("user").doc(uid).get();
-  if (!userSnap.exists || userSnap.get("kyc") !== true) {
+  // Trust ladder: buying a ticket requires only phone (+email) verification, not
+  // full ID + selfie. Accept verificationLevel 'phone' or 'id'; fall back to the
+  // legacy kyc flag for user docs not yet carrying verificationLevel.
+  const verificationLevel = userSnap.get("verificationLevel");
+  const isPhoneOrIdVerified =
+    userSnap.get("kyc") === true ||
+    verificationLevel === "phone" ||
+    verificationLevel === "id";
+  if (!userSnap.exists || !isPhoneOrIdVerified) {
     throw new functions.https.HttpsError("permission-denied", "Your account must be verified to buy tickets.");
   }
 
@@ -4289,17 +4297,29 @@ exports.getEventForViewer = functions.https.onCall(async (data, context) => {
     if (provider !== "anonymous") {
       uid = context.auth.uid;
       const userSnap = await db.collection("user").doc(uid).get();
-      level = userSnap.exists && userSnap.get("kyc") === true ? "verified" : "registered";
+      // Trust ladder: 'id'/legacy-kyc => verified; 'phone' => phoneVerified
+      // (Verified-lite); anything else => registered.
+      const vl = userSnap.get("verificationLevel");
+      if (userSnap.exists && (userSnap.get("kyc") === true || vl === "id")) {
+        level = "verified";
+      } else if (userSnap.exists && vl === "phone") {
+        level = "phoneVerified";
+      } else {
+        level = "registered";
+      }
     }
   }
 
   const participantIds = Array.isArray(event.participantsRef) ? event.participantsRef.map((r) => r.id) : [];
   const usersPaid = Array.isArray(event.usersPaid) ? event.usersPaid : [];
-  const hasAccess = level === "verified" && !!uid && (participantIds.includes(uid) || usersPaid.includes(uid));
+  // Nivel 3 unlock now requires only phone-or-id verification plus joined/paid,
+  // mirroring the client access_control.can() truth table.
+  const isPhoneOrIdVerified = level === "phoneVerified" || level === "verified";
+  const hasAccess = isPhoneOrIdVerified && !!uid && (participantIds.includes(uid) || usersPaid.includes(uid));
 
   const gd = generalDateOf(event.startDate);
   const isGuest = level === "guest";
-  const isRegisteredOrUp = level === "registered" || level === "verified";
+  const isRegisteredOrUp = level !== "guest";
 
   // Base projection visible to every level (incl. guests): name, category/vibe,
   // attendee count, general date, image. Image URL is exposed at all levels (the
