@@ -1,54 +1,96 @@
 rules_version = '2';
 
-// GPlay Firestore security rules — Task B3 (server-side access enforcement).
+// GPlay Firestore security rules — BASELINE (require authentication).
+// ============================================================================
+// STATUS: deployable. Replaces the wide-open `allow read, write: if true`
+// currently live in the console (which lets ANYONE on the internet read,
+// modify, or delete the entire database). DEPLOY TO DEV AND TEST FIRST — see the
+// deploy/test plan at the bottom — before touching production.
 //
-// NOT YET DEPLOYED. Review against the rules currently live in the Firebase
-// console before `firebase deploy --only firestore:rules` — the `event` and
-// `user` write rules below are placeholders that almost certainly need to be
-// reconciled with the existing app behavior, or the live app may lose writes.
+// WHAT THIS DOES
+//   Requires an authenticated session (a real signed-in user OR an anonymous
+//   guest) for ALL access. This closes the "open to the internet" hole, which
+//   is the urgent problem. Anonymous guest mode keeps working because
+//   `signInAnonymously()` produces `request.auth != null`.
 //
-// TRUST LADDER (2026-07): reading an event you've joined/paid now requires only
-// phone verification (verificationLevel 'phone' or 'id'), NOT full ID. The LIVE
-// console rules MUST be updated with the same widening (see isPhoneOrIdVerified
-// below) or phone-verified buyers will be denied the event they paid for.
+// WHAT THIS DOES *NOT* DO (deliberately, to avoid breaking the live app)
+//   It does NOT enforce per-document ownership or trust-ladder field
+//   visibility. A full audit of the client (2026-07, 48 collections) found the
+//   app has NO client-side ownership model — it performs pervasive cross-user
+//   reads and writes GLOBAL/other-user documents directly from the client:
+//     - global singleton counters incremented by any client:
+//         coins/UUFdzV2ubYg28628CEBH, eventsDetails/rWJ7dYgyWgRsFPfqrC6T,
+//         badges/{yyyy-MM-dd}
+//     - `event` docs created/updated by id with no host-ownership check;
+//       geo-box queries read the whole catalog
+//     - event subcollections (participants, comment, question, answer) written
+//       by any authenticated user
+//     - chats (message/request/group) addressed by a caller-supplied chatId
+//       with no participant enforcement
+//     - `user` docs: cross-user reads (profiles, attendee lists); some flows
+//       (QR-scan rewards, referral/MLM gifts) write OTHER users' docs
+//   Tightening any of these to real ownership rules would break those flows
+//   until they are moved to Cloud Functions (server-side, admin privileges).
+//   That is a separate, larger project — do NOT bolt per-collection ownership
+//   onto this file without doing that work first.
+//
+// TRUST-LADDER / FIELD VISIBILITY (future work, NOT enforced here)
+//   The granular model — guests read `events_public`, registered users call the
+//   `getEventForViewer` callable, and phone/ID-verified joined users read the
+//   full `event/{id}` doc — is specified in
+//   docs/backend_access_control_contract.md. It is intentionally NOT applied
+//   below: today the client guest feed reads `event/` directly, so enforcing it
+//   would blank the guest experience. Applying it requires the client to switch
+//   the guest/registered feed to events_public / getEventForViewer first.
+// ============================================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // True iff the caller is a signed-in, non-anonymous user who is at least
-    // phone-verified ("Verified-lite"): verificationLevel 'phone' or 'id', or the
-    // legacy kyc flag. This is the trust-ladder gate for reading joined/paid events.
-    function isPhoneOrIdVerified() {
-      return request.auth != null
-        && request.auth.token.firebase.sign_in_provider != 'anonymous'
-        && exists(/databases/$(database)/documents/user/$(request.auth.uid))
-        && (
-          get(/databases/$(database)/documents/user/$(request.auth.uid)).data.kyc == true
-          || get(/databases/$(database)/documents/user/$(request.auth.uid)).data.verificationLevel in ['phone', 'id']
-        );
+    // Single baseline rule: any signed-in session (real user or anonymous
+    // guest) may read/write; unauthenticated internet access is denied.
+    //
+    // NOTE ON PRECEDENCE: Firestore grants access if ANY matching rule allows
+    // it. A recursive `{document=**}` wildcard therefore overrides more specific
+    // rules for writes, so a separate `events_public { allow write: if false }`
+    // block would be silently overridden by this wildcard and give a false sense
+    // of protection. We deliberately keep ONE rule here. events_public is
+    // trigger-maintained; protecting it from authenticated client writes must be
+    // done in the granular ruleset (future work), not by adding a block that the
+    // wildcard would defeat.
+    match /{document=**} {
+      allow read, write: if request.auth != null;
     }
-
-    // Guest-safe public projection, maintained only by the eventPublicProjection trigger.
-    match /events_public/{eventId} {
-      allow read: if true;
-      allow write: if false;
-    }
-
-    // Full event documents: readable only by verified users who have joined
-    // (free: in participantsRef) or paid (in usersPaid). Everyone else is denied
-    // the full doc and must read events_public / call getEventForViewer instead.
-    match /event/{eventId} {
-      allow read: if isPhoneOrIdVerified() && (
-        (resource.data.usersPaid != null
-          && request.auth.uid in resource.data.usersPaid)
-        || (resource.data.participantsRef != null
-          && /databases/$(database)/documents/user/$(request.auth.uid) in resource.data.participantsRef)
-      );
-
-      // TODO(reconcile with current console rules before deploying).
-      allow write: if request.auth != null;
-    }
-
-    // TODO(reconcile every other collection — user, mlm*, etc. — with the
-    // current console rules before deploying, or those reads/writes will break).
   }
 }
+
+// ============================================================================
+// DEPLOY / TEST PLAN (do this in order; never skip dev)
+//
+// 1. DEV FIRST. Point the Firebase CLI at the dev project and deploy:
+//        firebase use g-play-dd31d
+//        firebase deploy --only firestore:rules
+//    (Or paste this file into Firebase console -> Firestore -> Rules for
+//     g-play-dd31d and Publish.)
+//
+// 2. SMOKE-TEST every major flow on a DEV build while signed in AND as a guest:
+//        - Welcome -> Continue as guest -> browse feed / open an event
+//        - Sign up a new user (writes the user doc)
+//        - Home feed loads events (geo queries)
+//        - Open an event, RSVP a free event, buy a paid ticket
+//        - Open the QR ticket; host scans it (scanqr writes rewards)
+//        - Chats: open a conversation, send a message
+//        - Rewards / daily check-in / badges (global counter writes)
+//        - Profile edits, favorites, comments/questions on an event
+//    Watch the flutter console for `permission-denied`. Any such error means a
+//    flow needs auth to be established earlier, or needs a rule exception.
+//
+// 3. WATCH FOR PRE-AUTH ACCESS. If anything reads Firestore before
+//    signInAnonymously()/sign-in completes, it will now fail. The fix is to
+//    ensure auth (even anonymous) is established before that read, NOT to loosen
+//    these rules back to `if true`.
+//
+// 4. ONLY AFTER dev is clean across all flows, repeat for PROD
+//    (g-play-dev-e4c4c). Deploy during low traffic and keep the previous
+//    ruleset handy to roll back (console -> Rules -> version history).
+// ============================================================================
