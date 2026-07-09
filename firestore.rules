@@ -6,15 +6,25 @@ rules_version = '2';
 // console before `firebase deploy --only firestore:rules` — the `event` and
 // `user` write rules below are placeholders that almost certainly need to be
 // reconciled with the existing app behavior, or the live app may lose writes.
+//
+// TRUST LADDER (2026-07): reading an event you've joined/paid now requires only
+// phone verification (verificationLevel 'phone' or 'id'), NOT full ID. The LIVE
+// console rules MUST be updated with the same widening (see isPhoneOrIdVerified
+// below) or phone-verified buyers will be denied the event they paid for.
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // True iff the caller is a signed-in, non-anonymous, KYC-verified user.
-    function isVerified() {
+    // True iff the caller is a signed-in, non-anonymous user who is at least
+    // phone-verified ("Verified-lite"): verificationLevel 'phone' or 'id', or the
+    // legacy kyc flag. This is the trust-ladder gate for reading joined/paid events.
+    function isPhoneOrIdVerified() {
       return request.auth != null
         && request.auth.token.firebase.sign_in_provider != 'anonymous'
         && exists(/databases/$(database)/documents/user/$(request.auth.uid))
-        && get(/databases/$(database)/documents/user/$(request.auth.uid)).data.kyc == true;
+        && (
+          get(/databases/$(database)/documents/user/$(request.auth.uid)).data.kyc == true
+          || get(/databases/$(database)/documents/user/$(request.auth.uid)).data.verificationLevel in ['phone', 'id']
+        );
     }
 
     // Guest-safe public projection, maintained only by the eventPublicProjection trigger.
@@ -27,7 +37,7 @@ service cloud.firestore {
     // (free: in participantsRef) or paid (in usersPaid). Everyone else is denied
     // the full doc and must read events_public / call getEventForViewer instead.
     match /event/{eventId} {
-      allow read: if isVerified() && (
+      allow read: if isPhoneOrIdVerified() && (
         (resource.data.usersPaid != null
           && request.auth.uid in resource.data.usersPaid)
         || (resource.data.participantsRef != null
