@@ -4146,6 +4146,15 @@ exports.createTicketPaymentIntent = functions.https.onCall(async (data, context)
 
 // A2. Stripe webhook: the source of truth for ticket fulfillment.
 exports.stripeWebhook = functions.runWith({memory: "1GB"}).https.onRequest(async (req, res) => {
+  // Diagnostic entry log: confirms the function is actually invoked by Stripe
+  // (and whether a signature header + secret are present). If real deliveries
+  // never log this, delivery/routing is the problem; if they log a signature
+  // failure below, STRIPE_WEBHOOK_SECRET does not match the endpoint's signing
+  // secret (Stripe Dashboard -> Developers -> Webhooks -> Signing secret).
+  console.log(
+      "stripeWebhook invoked. signature=", !!req.headers["stripe-signature"],
+      "secretConfigured=", !!STRIPE_WEBHOOK_SECRET);
+
   let stripeEvent;
   try {
     const signature = req.headers["stripe-signature"];
