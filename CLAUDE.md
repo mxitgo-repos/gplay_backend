@@ -52,6 +52,11 @@ firebase functions:log                       # tail logs (npm run logs)
   [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Manual fallback (verify target with `firebase use`
   first): [.firebaserc](.firebaserc) aliases `default`/`dev` → DEV and `prod` → PROD, so
   `firebase deploy --only functions` hits DEV and `--project prod` hits PROD.
+  The DEV pipeline was **validated end-to-end on 2026-07-07**. The CI service account needs
+  the **seven** IAM roles in DEPLOYMENT.md §1 (the first four alone fail with 403s).
+  `workflow_dispatch` (manual run) only works once the workflow file exists on `main` —
+  until the first PROD cutover, trigger DEV deploys by merging a change touching
+  `functions/**`, or re-run a prior run with `gh run rerun <id>`.
 - Node runtime is pinned to **22** (`functions/package.json` engines + repo-root
   [.nvmrc](.nvmrc)) — the newest runtime Firebase-managed Cloud Functions supports (Node 24
   is *not* deployable here). No region is set, so functions deploy to the default
@@ -131,7 +136,12 @@ Added to `index.js`, all reusing the helpers/constants near the bottom of the fi
   `application_fee_amount = round(priceCents * TICKET_COMMISSION_RATE)` (rate is a TODO
   constant), idempotency key `` `${eventId}:${uid}` ``. Verified (`kyc==true`) callers only.
 - `stripeWebhook` (onRequest) — verifies `req.rawBody` against `STRIPE_WEBHOOK_SECRET`;
-  fulfills on `payment_intent.succeeded`. The **source of truth** for fulfillment.
+  fulfills on `payment_intent.succeeded`. The **source of truth** for fulfillment. A DEV
+  endpoint is registered in the Stripe **test** dashboard. Safe probes: an unsigned `POST`
+  returns `400 Webhook Error` (proves it's deployed and verifying), and the dashboard's
+  "Send test event" exercises the signed path — test events carry no `eventId`/`uid`
+  metadata, so the handler logs a warning and returns 200 without touching any data. Only
+  a real app purchase exercises the metadata-bearing fulfillment path.
 - `confirmTicketPurchase` (onCall) — client fallback; same idempotent fulfillment.
 - `fulfillTicketPurchase(eventId, uid)` — transaction-based idempotent join (guards on
   `usersPaid`); mirrors a free join, **no gToken deduction**.
