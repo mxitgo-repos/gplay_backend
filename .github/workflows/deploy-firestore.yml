@@ -1,0 +1,46 @@
+name: Deploy Firestore Rules
+
+# Firestore SECURITY RULES only. Deliberately manual (workflow_dispatch), never
+# on push: a rules deploy is global and instant, and a bad ruleset locks every
+# user out of the app with no smoke-test window. Indexes are additive and ship
+# automatically with the functions workflows instead.
+#
+# firestore.rules in this repo is the source of truth for BOTH projects — DEV
+# and PROD run byte-identical rules; only secrets and data differ. Always run
+# DEV first, smoke-test the flows listed at the bottom of firestore.rules, then
+# run PROD during low traffic with the console's Rules > version history open
+# for a one-click rollback.
+#
+# Requires roles/firebaserules.admin on the target project's CI service account.
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "Target project (deploy to dev and smoke-test before prod)"
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+
+concurrency:
+  group: deploy-firestore-rules-${{ inputs.project }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ inputs.project == 'prod' && secrets.PROD_FIREBASE_SA_KEY || secrets.DEV_FIREBASE_SA_KEY }}
+
+      - name: Deploy Firestore rules
+        run: npx firebase-tools deploy --only firestore:rules --project ${{ inputs.project }} --non-interactive

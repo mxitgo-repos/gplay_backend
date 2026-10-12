@@ -10,7 +10,17 @@ const Stripe = require("stripe");
 const stripe = new Stripe(process.env.STRIPE_SECRET || "placeholder");
 admin.initializeApp();
 
-const {FieldValue, Timestamp} = admin.firestore;
+// Imported from the MODULAR entry point rather than `admin.firestore`, on
+// purpose. The functions emulator proxies the `admin` namespace and its stub
+// does not carry the static properties, so under `firebase emulators:exec` both
+// `admin.firestore.FieldValue` and `admin.firestore.Timestamp` are undefined
+// (verified — the fully-qualified form fails identically to the destructure).
+// Production works either way, so the breakage is invisible until you try to
+// test: every trigger touching FieldValue/Timestamp dies with "Cannot read
+// properties of undefined", which is why eventPublicProjection and
+// eventChatMessagePush were unverifiable. `firebase-admin/firestore` is not
+// proxied. Do not "simplify" this back to `admin.firestore`.
+const {FieldValue, Timestamp} = require("firebase-admin/firestore");
 
 const BATCH_SIZE = 500;
 const CONCURRENT_LIMIT = 10;
@@ -3720,12 +3730,8 @@ async function processInChunks(array, chunkSize, processor) {
   const results = [];
   for (let i = 0; i < array.length; i += chunkSize) {
     const chunk = array.slice(i, i + chunkSize);
-    console.log(chunk);
-    console.log("chunk");
     const chunkResults = await Promise.all(chunk.map(processor));
     results.push(...chunkResults);
-    console.log(results);
-    console.log("results");
   }
   return results;
 }
@@ -3996,6 +4002,87 @@ async function getHostConnectedAccountId(hostRef) {
 }
 
 /**
+ * Best-effort: puts a paid attendee into the event's group chat
+ * (`eventChat/{eventId}.participants`). §5/B1 — the client cannot do this,
+ * because Stripe fulfillment happens server-side.
+ *
+ * Deliberately runs OUTSIDE fulfillTicketPurchase's transaction:
+ * `eventChat/{eventId}` is rewritten on every message send (lastMessage*,
+ * readBy), so joining it inside the money transaction would put ticket
+ * fulfillment in contention with a live chat — and an abort there surfaces as
+ * an error to a buyer whose card has already been charged. This never throws;
+ * the client's idempotent EventChatRepository.ensureMembership reconciles
+ * anything missed the next time the buyer opens the event.
+ * @param {string} eventId - the event document id (also the eventChat doc id).
+ * @param {string} uid - the buyer's user id.
+ * @param {Object} event - the event document data (name, photo, hostRef).
+ * @return {Promise<string>} created|joined|already|banned|error.
+ */
+async function joinEventChatBestEffort(eventId, uid, event) {
+  const db = admin.firestore();
+  const chatRef = db.collection("eventChat").doc(eventId);
+
+  try {
+    return await db.runTransaction(async (tx) => {
+      const chatSnap = await tx.get(chatRef);
+
+      if (!chatSnap.exists) {
+        // Normally the client creates this when the host posts the event
+        // (EventsRepository.postEvent -> joinChat). This is the fallback for
+        // when that fire-and-forget write never landed.
+        const hostId = event && event.hostRef ? event.hostRef.id : "";
+        tx.set(chatRef, {
+          eventId: eventId,
+          eventName: (event && event.name) || "",
+          eventPhoto: (event && event.photo) || "",
+          hostId: hostId,
+          // The host MUST be seeded here: the client's joinChat only arrayUnions
+          // into an already-existing doc, so otherwise the host would never be a
+          // member and the participant-scoped read rule would lock them out of
+          // their own event's chat.
+          participants: hostId && hostId !== uid ? [hostId, uid] : [uid],
+          mutedIds: [],
+          bannedIds: [],
+          lastMessage: "",
+          lastMessageSenderId: "",
+          lastMessageSenderName: "",
+          // Required: streamUserEventChats orders by this field, and Firestore
+          // silently omits documents that do not carry the orderBy field — the
+          // chat would never appear in anyone's Messages list without it.
+          lastMessageTimestamp: FieldValue.serverTimestamp(),
+          readBy: [],
+          isClosed: false,
+          createdAt: FieldValue.serverTimestamp(),
+          // `mode` is deliberately omitted: chatMode is never persisted on the
+          // event doc (the client passes it straight into joinChat), so only the
+          // host knows it. EventChatModel.fromMap defaults a missing mode to
+          // "open", so omitting leaves the host's real choice recoverable.
+        }, {merge: true});
+        return "created";
+      }
+
+      // Checked inside the transaction so a concurrent host ban cannot be
+      // silently undone by this join.
+      const bannedIds = chatSnap.get("bannedIds") || [];
+      if (bannedIds.includes(uid)) {
+        return "banned";
+      }
+      const participants = chatSnap.get("participants") || [];
+      if (participants.includes(uid)) {
+        return "already";
+      }
+
+      tx.update(chatRef, {participants: FieldValue.arrayUnion(uid)});
+      return "joined";
+    });
+  } catch (error) {
+    // Never fail an already-paid fulfillment over the group chat.
+    console.error("joinEventChatBestEffort failed:", eventId, uid, error);
+    return "error";
+  }
+}
+
+/**
  * Idempotently fulfills a paid ticket purchase by joining the buyer to the
  * event. Mirrors a free join (no G-Token deduction) and is safe to call
  * multiple times (webhook + client confirm both firing -> exactly one join).
@@ -4008,14 +4095,14 @@ async function fulfillTicketPurchase(eventId, uid) {
   const eventRef = db.collection("event").doc(eventId);
   const userRef = db.collection("user").doc(uid);
 
-  return db.runTransaction(async (tx) => {
+  const result = await db.runTransaction(async (tx) => {
     const eventSnap = await tx.get(eventRef);
     if (!eventSnap.exists) {
       throw new functions.https.HttpsError("not-found", "Event not found.");
     }
     const usersPaid = eventSnap.get("usersPaid") || [];
     if (usersPaid.includes(uid)) {
-      return {fulfilled: false, alreadyJoined: true};
+      return {fulfilled: false, alreadyJoined: true, event: eventSnap.data()};
     }
     tx.update(eventRef, {
       usersPaid: FieldValue.arrayUnion(uid),
@@ -4025,8 +4112,134 @@ async function fulfillTicketPurchase(eventId, uid) {
     tx.update(userRef, {
       attendedEventsRef: FieldValue.arrayUnion(eventRef),
     });
-    return {fulfilled: true, alreadyJoined: false};
+    return {fulfilled: true, alreadyJoined: false, event: eventSnap.data()};
   });
+
+  // §5/B1: also join the buyer to the event group chat. Runs on the
+  // alreadyJoined path too, so a previous attempt whose chat write failed gets
+  // repaired on the next webhook retry / client confirm.
+  const chatResult = await joinEventChatBestEffort(eventId, uid, result.event);
+  console.log("fulfillTicketPurchase chat join:", eventId, uid, chatResult);
+
+  return {fulfilled: result.fulfilled, alreadyJoined: result.alreadyJoined};
+}
+
+/**
+ * Resolves a signed-in caller's trust-ladder level from their user doc.
+ *
+ * `verificationLevel` is the authority; the legacy boolean `kyc == true` is
+ * still honoured for user docs written before that field existed. Mirrors
+ * AccessLevel in the client's access_control.dart — keep the two in sync.
+ * @param {Object} userSnap - a `user/{uid}` DocumentSnapshot.
+ * @return {string} verified|phoneVerified|registered.
+ */
+function trustLevelOf(userSnap) {
+  if (!userSnap || !userSnap.exists) {
+    return "registered";
+  }
+  const vl = userSnap.get("verificationLevel");
+  if (userSnap.get("kyc") === true || vl === "id") {
+    return "verified";
+  }
+  if (vl === "phone") {
+    return "phoneVerified";
+  }
+  return "registered";
+}
+
+/**
+ * True when a user doc carries an active Premium plan: `isPremium` set and
+ * `endPremium` either absent (granted by hand, never expires) or still in the
+ * future. Uses server time — the client's expiry flip only runs when the host
+ * opens the app, so `isPremium` alone can be stale. Mirrors hasActivePremium()
+ * in the client's premium_policy.dart — keep the two in sync.
+ * @param {Object} userSnap - a `user/{uid}` DocumentSnapshot.
+ * @return {boolean} whether the user's Premium plan is active right now.
+ */
+function hasActivePremium(userSnap) {
+  if (!userSnap || !userSnap.exists || userSnap.get("isPremium") !== true) {
+    return false;
+  }
+  const endPremium = userSnap.get("endPremium");
+  if (!endPremium || typeof endPremium.toMillis !== "function") {
+    return true;
+  }
+  return endPremium.toMillis() > Date.now();
+}
+
+/**
+ * Task C: decides whether a fiat ticket on this event is commission-free, and
+ * spends one of the host's Premium `salesPremium` credits the first time it is.
+ *
+ * A credit is spent per EVENT, not per ticket: once claimed, `commissionWaived`
+ * is locked onto the event and every later ticket is also free of commission,
+ * even after the plan expires. Transactional so two buyers racing on an event's
+ * first ticket spend exactly one credit. Must run before (never inside) the
+ * Stripe call: transactions retry, and application_fee_amount is fixed when the
+ * PaymentIntent is created.
+ * @param {Object} eventRef - the `event/{eventId}` DocumentReference.
+ * @param {Object} hostRef - the event's hostRef (a `user/{uid}` DocumentReference).
+ * @return {Promise<boolean>} whether this event's tickets carry no commission.
+ */
+async function claimCommissionWaiver(eventRef, hostRef) {
+  return admin.firestore().runTransaction(async (tx) => {
+    const eventSnap = await tx.get(eventRef);
+    const hostSnap = await tx.get(hostRef);
+    if (eventSnap.get("commissionWaived") === true) {
+      return true;
+    }
+    const credits = hostSnap.exists ? hostSnap.get("salesPremium") : 0;
+    if (!hasActivePremium(hostSnap) || typeof credits !== "number" || credits <= 0) {
+      return false;
+    }
+    tx.update(eventRef, {
+      commissionWaived: true,
+      commissionWaivedAt: FieldValue.serverTimestamp(),
+    });
+    tx.update(hostRef, {salesPremium: FieldValue.increment(-1)});
+    return true;
+  });
+}
+
+/**
+ * True when the trust level clears the phone-or-ID bar that Nivel 3 requires.
+ * @param {string} level - a value from trustLevelOf().
+ * @return {boolean} whether the caller is phone- or ID-verified.
+ */
+function isPhoneOrIdVerified(level) {
+  return level === "phoneVerified" || level === "verified";
+}
+
+/**
+ * True when an event sells tickets for real money (as opposed to the legacy
+ * G-Token flow or a free event).
+ * @param {Object} event - the event document data.
+ * @return {boolean} whether the event is a fiat paid event.
+ */
+function isPaidEvent(event) {
+  return event.isSelling === true && !!event.currency;
+}
+
+/**
+ * True when the caller has actually joined (free event) or paid (paid event).
+ *
+ * Mirrors hasJoinedOrPaid() in the client's access_control.dart: on a PAID
+ * event only `usersPaid` counts, so someone sitting in `participantsRef`
+ * without having paid does not qualify.
+ * @param {Object} event - the event document data.
+ * @param {string} uid - the caller's user id.
+ * @return {boolean} whether the caller has joined or paid.
+ */
+function hasJoinedOrPaid(event, uid) {
+  if (!uid) {
+    return false;
+  }
+  const usersPaid = Array.isArray(event.usersPaid) ? event.usersPaid : [];
+  if (isPaidEvent(event)) {
+    return usersPaid.includes(uid);
+  }
+  const participantIds = Array.isArray(event.participantsRef) ? event.participantsRef.map((r) => r.id) : [];
+  return participantIds.includes(uid);
 }
 
 /**
@@ -4115,11 +4328,19 @@ exports.createTicketPaymentIntent = functions.https.onCall(async (data, context)
   }
 
   const hostAccountId = await getHostConnectedAccountId(event.hostRef);
-  const applicationFee = Math.round(priceCents * TICKET_COMMISSION_RATE);
+  // Task C: a Premium host's first 2 paid events sell commission-free.
+  const commissionWaived = await claimCommissionWaiver(eventSnap.ref, event.hostRef);
+  const applicationFee = commissionWaived ? 0 : Math.round(priceCents * TICKET_COMMISSION_RATE);
   const currencyLower = String(event.currency).toLowerCase();
 
   try {
-    const customer = await stripe.customers.create({metadata: {uid}});
+    // Keyed like the PaymentIntent below: without it a retry (buyer closes the
+    // PaymentSheet and taps Buy again) creates a NEW customer, the intent's
+    // params no longer match its idempotency key, and Stripe rejects it.
+    const customer = await stripe.customers.create(
+        {metadata: {uid}},
+        {idempotencyKey: `customer:${eventId}:${uid}`},
+    );
     const ephemeralKey = await stripe.ephemeralKeys.create(
         {customer: customer.id},
         {apiVersion: "2023-10-16"},
@@ -4132,7 +4353,7 @@ exports.createTicketPaymentIntent = functions.https.onCall(async (data, context)
           automatic_payment_methods: {enabled: true, allow_redirects: "never"},
           application_fee_amount: applicationFee,
           transfer_data: {destination: hostAccountId},
-          metadata: {eventId, uid},
+          metadata: {eventId, uid, commissionWaived: String(commissionWaived)},
         },
         {idempotencyKey: `${eventId}:${uid}`},
     );
@@ -4147,6 +4368,12 @@ exports.createTicketPaymentIntent = functions.https.onCall(async (data, context)
     };
   } catch (error) {
     if (error instanceof functions.https.HttpsError) throw error;
+    if (error && error.type === "StripeIdempotencyError") {
+      // Same buyer + event within 24 h, but the fee changed in between (the
+      // host's commission waiver was claimed after their first attempt).
+      console.warn("createTicketPaymentIntent idempotency conflict:", eventId, uid);
+      throw new functions.https.HttpsError("failed-precondition", "This ticket's price details changed. Please try again later.");
+    }
     console.error("createTicketPaymentIntent error:", error);
     throw new functions.https.HttpsError("internal", error.message);
   }
@@ -4255,14 +4482,12 @@ exports.eventPublicProjection = functions.firestore.document("event/{eventId}").
     updatedAt: FieldValue.serverTimestamp(),
   };
 
+  // Exact time + full description are hidden from guests on ALL event types
+  // (customer direction 2026-06-17, access_control.dart exactTime /
+  // fullDescription — overrides §3's free-event exception), so this guest-read
+  // mirror never carries startDate/endDate/bio. Paid events add a price bracket.
   if (isPaid && typeof event.priceCents === "number") {
-    // Paid events: guests see only a price bracket, never exact time/description.
     Object.assign(publicDoc, priceBracketFor(event.currency, event.priceCents));
-  } else {
-    // Free events: guests may see exact time + full description (§3 matrix).
-    publicDoc.startDate = event.startDate || null;
-    publicDoc.endDate = event.endDate || null;
-    publicDoc.bio = event.bio || null;
   }
 
   await publicRef.set(publicDoc);
@@ -4297,16 +4522,7 @@ exports.getEventForViewer = functions.https.onCall(async (data, context) => {
     if (provider !== "anonymous") {
       uid = context.auth.uid;
       const userSnap = await db.collection("user").doc(uid).get();
-      // Trust ladder: 'id'/legacy-kyc => verified; 'phone' => phoneVerified
-      // (Verified-lite); anything else => registered.
-      const vl = userSnap.get("verificationLevel");
-      if (userSnap.exists && (userSnap.get("kyc") === true || vl === "id")) {
-        level = "verified";
-      } else if (userSnap.exists && vl === "phone") {
-        level = "phoneVerified";
-      } else {
-        level = "registered";
-      }
+      level = trustLevelOf(userSnap);
     }
   }
 
@@ -4314,8 +4530,11 @@ exports.getEventForViewer = functions.https.onCall(async (data, context) => {
   const usersPaid = Array.isArray(event.usersPaid) ? event.usersPaid : [];
   // Nivel 3 unlock now requires only phone-or-id verification plus joined/paid,
   // mirroring the client access_control.can() truth table.
-  const isPhoneOrIdVerified = level === "phoneVerified" || level === "verified";
-  const hasAccess = isPhoneOrIdVerified && !!uid && (participantIds.includes(uid) || usersPaid.includes(uid));
+  // NOTE: this deliberately keeps its original OR-of-both-arrays predicate
+  // rather than switching to hasJoinedOrPaid(), which is stricter on paid events
+  // (usersPaid only). Tightening it here would revoke access from anyone a host
+  // invited into a paid event for free, so it is left as a separate decision.
+  const hasAccess = isPhoneOrIdVerified(level) && !!uid && (participantIds.includes(uid) || usersPaid.includes(uid));
 
   const gd = generalDateOf(event.startDate);
   const isGuest = level === "guest";
@@ -4342,9 +4561,10 @@ exports.getEventForViewer = functions.https.onCall(async (data, context) => {
     }
   }
 
-  // Exact time + full description: hidden ONLY from guests on PAID events.
-  // (Guests on free events may see them per the §3 matrix.)
-  if (!isPaid || !isGuest) {
+  // Exact time + full description: hidden from guests on ALL event types
+  // (customer direction 2026-06-17, mirrors access_control.dart exactTime /
+  // fullDescription — overrides §3's free-event exception).
+  if (!isGuest) {
     projection.startDate = event.startDate ? event.startDate.toMillis() : null;
     projection.endDate = event.endDate ? event.endDate.toMillis() : null;
     projection.bio = event.bio || null;
@@ -4374,4 +4594,444 @@ exports.getEventForViewer = functions.https.onCall(async (data, context) => {
   }
 
   return {level, hasAccess: hasAccess, event: projection};
+});
+
+// ==================== EVENT BENEFIT REDEMPTION (§7/B5) ====================
+
+const crypto = require("crypto");
+
+// Cost of redeeming an event benefit, mirroring kBenefitCostGShards client-side.
+const BENEFIT_COST_GSHARDS = 1;
+
+// Crockford-ish alphabet: no 0/O/1/I/L/U, so a code read aloud at a venue door
+// cannot be transcribed ambiguously.
+const BENEFIT_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/**
+ * Generates a BEN-XXXXX-XXXXX redemption code.
+ *
+ * Uses crypto.randomInt rather than Math.random: the code is the only thing
+ * standing between a redemption and a free benefit at the door, so it must not
+ * be predictable from other codes.
+ * @return {string} a formatted redemption code.
+ */
+function generateBenefitCode() {
+  const block = () => {
+    let out = "";
+    for (let i = 0; i < 5; i++) {
+      out += BENEFIT_CODE_ALPHABET[crypto.randomInt(BENEFIT_CODE_ALPHABET.length)];
+    }
+    return out;
+  };
+  return `BEN-${block()}-${block()}`;
+}
+
+/**
+ * B5 — redeems an event's included benefit for the caller, spending
+ * BENEFIT_COST_GSHARDS from their G-Shard balance and issuing a single-use code.
+ *
+ * Mirrors the client's EventBenefitRepository.redeemBenefit transaction so the
+ * client can swap its body for this callable without touching any caller. The
+ * redemption doc id IS the uid, which makes single-use-per-user a database
+ * invariant rather than a check.
+ *
+ * Returns a plain object rather than throwing (matching this file's callable
+ * convention), carrying enough detail for the client bloc to rebuild its three
+ * distinct outcomes: alreadyRedeemed (with the existing code), insufficientFunds
+ * (with the balance), and a generic error.
+ * @param {Object} data - {eventId}.
+ * @param {Object} context - the callable context (carries auth).
+ * @return {Promise<Object>} {success, reason?, code?, balance?, redemption?}.
+ */
+exports.redeemEventBenefit = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    return {success: false, reason: "unauthenticated"};
+  }
+  const uid = context.auth.uid;
+  const eventId = data && data.eventId;
+  if (!eventId) {
+    return {success: false, reason: "invalidArgument"};
+  }
+
+  const db = admin.firestore();
+  const eventRef = db.collection("event").doc(eventId);
+  const userRef = db.collection("user").doc(uid);
+  const redemptionRef = eventRef.collection("benefitRedemptions").doc(uid);
+
+  try {
+    const [eventSnap, callerSnap] = await Promise.all([eventRef.get(), userRef.get()]);
+    if (!eventSnap.exists) {
+      return {success: false, reason: "notFound"};
+    }
+    const event = eventSnap.data();
+
+    // Enforce server-side what the client's AccessGate enforces in the UI:
+    // benefits are a Nivel 3 capability (phone-or-ID verified AND joined/paid).
+    if (!isPhoneOrIdVerified(trustLevelOf(callerSnap)) || !hasJoinedOrPaid(event, uid)) {
+      return {success: false, reason: "permissionDenied"};
+    }
+    if (!event.benefitPhoto && !event.benefitDescription) {
+      return {success: false, reason: "noBenefit"};
+    }
+
+    return await db.runTransaction(async (tx) => {
+      const [redemptionSnap, userSnap] = await tx.getAll(redemptionRef, userRef);
+
+      if (redemptionSnap.exists) {
+        return {success: false, reason: "alreadyRedeemed", code: redemptionSnap.get("code") || ""};
+      }
+      const balance = userSnap.get("gTokens") || 0;
+      if (balance < BENEFIT_COST_GSHARDS) {
+        return {success: false, reason: "insufficientFunds", balance: balance};
+      }
+
+      const now = Timestamp.now();
+      const code = generateBenefitCode();
+
+      tx.update(userRef, {
+        gTokens: FieldValue.increment(-BENEFIT_COST_GSHARDS),
+        // Receipt, matching the shape UserRepository.updatePackAmount writes.
+        transactions: FieldValue.arrayUnion({
+          transferId: now.toMillis(),
+          price: BENEFIT_COST_GSHARDS,
+          type: "gtokens",
+          reason: "eventBenefit",
+          eventId: eventId,
+        }),
+      });
+
+      tx.set(redemptionRef, {
+        userId: uid,
+        eventId: eventId,
+        code: code,
+        redeemedAt: now,
+        costGShards: BENEFIT_COST_GSHARDS,
+        status: "active",
+        // Snapshotted so the holder's code keeps describing what they bought
+        // even if the host later edits the event.
+        benefitDescription: event.benefitDescription || "",
+        benefitPhoto: event.benefitPhoto || "",
+      });
+
+      return {
+        success: true,
+        redemption: {
+          userId: uid,
+          eventId: eventId,
+          code: code,
+          // Millis, not a Timestamp: callable responses are JSON.
+          redeemedAt: now.toMillis(),
+          costGShards: BENEFIT_COST_GSHARDS,
+          status: "active",
+          benefitDescription: event.benefitDescription || "",
+          benefitPhoto: event.benefitPhoto || "",
+        },
+      };
+    });
+  } catch (error) {
+    console.error("redeemEventBenefit failed:", eventId, uid, error);
+    return {success: false, reason: "error"};
+  }
+});
+
+// ==================== EVENT CLEANUP ON DELETE (§5/B4) ====================
+
+// Subcollections hanging off event/{eventId}. Firestore does NOT cascade:
+// deleting the parent leaves these orphaned and reachable only by path.
+const EVENT_SUBCOLLECTIONS = ["question", "comment", "answer", "participants", "benefitRedemptions"];
+
+/**
+ * B4 — removes everything that outlives a deleted event: the top-level group
+ * chat (`eventChat/{eventId}` plus its `messages` and `pushState`
+ * subcollections) and the event's own subcollections.
+ *
+ * Replaces a client-side loop that deleted one document at a time, swallowed
+ * every error, and could be interrupted by the app being killed mid-run. Safe
+ * to run alongside that loop: the client deletes subcollections first and the
+ * event doc last, so this usually sweeps already-empty collections (a cheap
+ * no-op) while catching whatever the best-effort client pass dropped.
+ * @param {Object} snap - the deleted event snapshot (unused).
+ * @param {Object} context - the trigger context (carries params.eventId).
+ * @return {Promise<null>} resolves when the cascade finishes.
+ */
+exports.cleanupDeletedEvent = functions.runWith({timeoutSeconds: 540, memory: "1GB"}).firestore.document("event/{eventId}").onDelete(async (snap, context) => {
+  const eventId = context.params.eventId;
+  const db = admin.firestore();
+  const startedAt = Date.now();
+
+  const writer = db.bulkWriter();
+  writer.onWriteError((error) => {
+    if (error.failedAttempts < 5) {
+      return true;
+    }
+    console.error("cleanupDeletedEvent gave up on:", error.documentRef.path, error.message);
+    return false;
+  });
+
+  // Passing the chat as a DOCUMENT ref sweeps it and every descendant
+  // (messages/**, pushState/**) in one call.
+  const targets = [db.collection("eventChat").doc(eventId)];
+  EVENT_SUBCOLLECTIONS.forEach((name) => {
+    targets.push(db.collection("event").doc(eventId).collection(name));
+  });
+
+  for (const target of targets) {
+    try {
+      // recursiveDelete() only FLUSHES the BulkWriter, it does not close it, so
+      // a single writer serves every target.
+      await db.recursiveDelete(target, writer);
+    } catch (error) {
+      console.error("cleanupDeletedEvent recursiveDelete failed:", target.path, error);
+    }
+  }
+  await writer.close();
+
+  // Logged so a chat large enough to approach the 540s ceiling is visible
+  // before it actually times out.
+  console.log(`cleanupDeletedEvent finished: ${eventId} in ${Date.now() - startedAt}ms`);
+  return null;
+});
+
+// ==================== EVENT CHAT PUSH FAN-OUT (§5/B2) ====================
+
+// At most one push per user per chat per window. This protects two things: the
+// recipient's notification tray, and `user/{uid}.notifications` — an unbounded
+// array inside a 1 MB document that every push appends to. Host announcements
+// bypass it (see below).
+const EVENT_CHAT_PUSH_COOLDOWN_MS = 120000;
+
+// Deliberately reuses type "1", which the client's notifications_page switch
+// routes to `eventdetail` (tab 0) — where the chat entry row lives. Push taps
+// always land on the notifications page regardless of payload, so the routing
+// that matters is the in-app row's. A brand-new type would fall through that
+// switch's `default:` branch, which neither navigates NOR marks the row read —
+// a permanently-unread dead row. Flip this constant only after the client ships
+// a matching case that deep-links into the chat.
+const EVENT_CHAT_NOTIFICATION_TYPE = "1";
+
+// Longest message preview carried in the push body / in-app row.
+const EVENT_CHAT_PREVIEW_MAX = 120;
+
+// db.getAll() fan-in size when reading recipients' block lists.
+const EVENT_CHAT_GETALL_CHUNK = 200;
+
+// FCM caps sendEach() at 500 messages per call.
+const FCM_SEND_EACH_LIMIT = 500;
+
+/**
+ * Drops recipients who have blocked the sender.
+ *
+ * `user/{uid}.usersRef` is an array of DocumentReference (NOT uid strings) and
+ * points *forward*: A.usersRef containing ref(B) means A blocked B. The client
+ * hides messages from people the *viewer* blocked, so push must mirror that
+ * direction — which costs one read per recipient. The field mask keeps each
+ * user's (potentially huge) `notifications` array off the wire.
+ * @param {Object} db - the Firestore instance.
+ * @param {Array<string>} recipients - candidate recipient uids.
+ * @param {string} senderId - the message sender's uid.
+ * @return {Promise<Array<string>>} recipients who have not blocked the sender.
+ */
+async function filterOutBlockersOf(db, recipients, senderId) {
+  const senderPath = db.collection("user").doc(senderId).path;
+  const refs = recipients.map((id) => db.collection("user").doc(id));
+  const allowed = [];
+
+  for (let i = 0; i < refs.length; i += EVENT_CHAT_GETALL_CHUNK) {
+    const chunk = refs.slice(i, i + EVENT_CHAT_GETALL_CHUNK);
+    const snaps = await db.getAll(...chunk, {fieldMask: ["usersRef"]});
+    snaps.forEach((snap) => {
+      if (!snap.exists) {
+        return;
+      }
+      const blocked = snap.get("usersRef") || [];
+      const hasBlockedSender = blocked.some((ref) => ref && ref.path === senderPath);
+      if (!hasBlockedSender) {
+        allowed.push(snap.id);
+      }
+    });
+  }
+  return allowed;
+}
+
+/**
+ * Applies the per-recipient push cooldown and claims the slot atomically.
+ *
+ * Read-and-claim happens in one transaction so two messages landing at the same
+ * moment cannot both pass the cooldown. State lives in a subcollection rather
+ * than on the chat doc so the client's `eventChat` contract stays untouched —
+ * and, being unmatched by the security rules, it is denied to clients by
+ * default. cleanupDeletedEvent sweeps it with the rest of the chat.
+ * @param {Object} db - the Firestore instance.
+ * @param {string} eventId - the event/chat id.
+ * @param {Array<string>} recipients - recipients that passed every other filter.
+ * @param {boolean} bypass - true for announcements mode (always push).
+ * @return {Promise<Array<string>>} recipients cleared to receive a push now.
+ */
+async function claimEventChatPushSlots(db, eventId, recipients, bypass) {
+  const stateRef = db.collection("eventChat").doc(eventId).collection("pushState").doc("state");
+  const nowMs = Date.now();
+
+  return db.runTransaction(async (tx) => {
+    const stateSnap = await tx.get(stateRef);
+    const lastPushAt = (stateSnap.exists && stateSnap.get("lastPushAt")) || {};
+
+    const eligible = bypass ? recipients.slice() : recipients.filter((uid) => {
+      const last = lastPushAt[uid];
+      const lastMs = last && typeof last.toMillis === "function" ? last.toMillis() : 0;
+      return nowMs - lastMs > EVENT_CHAT_PUSH_COOLDOWN_MS;
+    });
+
+    if (eligible.length > 0) {
+      const claimed = {};
+      eligible.forEach((uid) => {
+        claimed[uid] = Timestamp.now();
+      });
+      // merge:true merges nested maps, so untouched recipients keep their stamp.
+      tx.set(stateRef, {lastPushAt: claimed}, {merge: true});
+    }
+    return eligible;
+  });
+}
+
+/**
+ * B2 — fans a new event-chat message out to the rest of the chat.
+ *
+ * Must be a Firestore trigger, not an HTTP endpoint: the client's
+ * EventChatRepository writes the message and stops — it has no HTTP or callable
+ * client at all, so an endpoint would never be invoked. Recipients are
+ * `participants` minus the sender, minus `bannedIds`, minus anyone who blocked
+ * the sender, minus anyone still inside the cooldown window.
+ *
+ * `mutedIds` is deliberately NOT filtered: mute means "cannot post", not
+ * "cannot hear". Suppressing a muted member's pushes would make mute
+ * indistinguishable from a ban and would silence host announcements for exactly
+ * the person the host is already policing.
+ * @param {Object} snap - the created message snapshot.
+ * @param {Object} context - the trigger context (params.eventId, params.messageId).
+ * @return {Promise<null>} resolves when the fan-out finishes.
+ */
+exports.eventChatMessagePush = functions.runWith({timeoutSeconds: 300, memory: "1GB"}).firestore.document("eventChat/{eventId}/messages/{messageId}").onCreate(async (snap, context) => {
+  const eventId = context.params.eventId;
+  const db = admin.firestore();
+  const message = snap.data() || {};
+
+  const content = typeof message.content === "string" ? message.content.trim() : "";
+  if (message.type === "system" || message.isDeleted === true || !content) {
+    return null;
+  }
+  const senderId = message.senderId;
+  if (!senderId) {
+    console.warn("eventChatMessagePush: message has no senderId:", snap.ref.path);
+    return null;
+  }
+
+  const chatSnap = await db.collection("eventChat").doc(eventId).get();
+  if (!chatSnap.exists) {
+    console.warn("eventChatMessagePush: no chat doc for:", eventId);
+    return null;
+  }
+  const chat = chatSnap.data() || {};
+  if (chat.isClosed === true) {
+    return null;
+  }
+
+  const participants = Array.isArray(chat.participants) ? chat.participants : [];
+  const bannedIds = Array.isArray(chat.bannedIds) ? chat.bannedIds : [];
+  const candidates = participants.filter((uid) => uid && uid !== senderId && !bannedIds.includes(uid));
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const unblocked = await filterOutBlockersOf(db, candidates, senderId);
+  if (unblocked.length === 0) {
+    return null;
+  }
+
+  // Announcements are rare and are the whole point of that mode, so they always
+  // push.
+  const isAnnouncement = chat.mode === "announcements";
+  const recipients = await claimEventChatPushSlots(db, eventId, unblocked, isAnnouncement);
+  if (recipients.length === 0) {
+    console.log("eventChatMessagePush: all recipients within cooldown:", eventId);
+    return null;
+  }
+
+  const eventName = chat.eventName || "Event chat";
+  const eventPhoto = chat.eventPhoto || "";
+  const senderName = message.senderName || "Someone";
+  const preview = content.length > EVENT_CHAT_PREVIEW_MAX ? `${content.slice(0, EVENT_CHAT_PREVIEW_MAX - 3)}...` : content;
+  const body = `${senderName}: ${preview}`;
+
+  const messages = recipients.map((uid) => ({
+    notification: {
+      title: eventName,
+      body: body,
+      image: eventPhoto,
+    },
+    data: {
+      notification: EVENT_CHAT_NOTIFICATION_TYPE,
+      information: JSON.stringify({eventId: eventId, eventHost: chat.hostId || ""}),
+      image: eventPhoto,
+      date: new Date().toISOString(),
+    },
+    android: {
+      notification: {
+        sound: "default",
+        priority: "high",
+        channelId: "high_importance_channel",
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+    // This backend delivers by FCM TOPIC, never by device token; the client
+    // subscribes to its own sanitized uid.
+    topic: uid.toLowerCase().replace(/[^a-z0-9_-]/g, "_"),
+  }));
+
+  for (let i = 0; i < messages.length; i += FCM_SEND_EACH_LIMIT) {
+    const batch = messages.slice(i, i + FCM_SEND_EACH_LIMIT);
+    const response = await admin.messaging().sendEach(batch);
+    if (response.failureCount > 0) {
+      console.warn("eventChatMessagePush partial send failure:", response.failureCount, "of", batch.length);
+    }
+  }
+
+  const entry = {
+    title: eventName,
+    titleEsp: eventName,
+    content: body,
+    contentEsp: body,
+    notificationType: EVENT_CHAT_NOTIFICATION_TYPE,
+    isRead: false,
+    date: Timestamp.now(),
+    image: eventPhoto,
+    eventId: eventId,
+    eventHost: chat.hostId || "",
+    navigation: "eventdetail",
+  };
+
+  const writer = db.bulkWriter();
+  writer.onWriteError((error) => {
+    if (error.failedAttempts < 3) {
+      return true;
+    }
+    console.error("eventChatMessagePush notification write failed:", error.documentRef.path, error.message);
+    return false;
+  });
+  recipients.forEach((uid) => {
+    writer.update(db.collection("user").doc(uid), {
+      notifications: FieldValue.arrayUnion(entry),
+    }).catch(() => {
+      // Already reported by onWriteError; swallowed so close() still resolves.
+    });
+  });
+  await writer.close();
+
+  console.log("eventChatMessagePush sent:", eventId, "recipients:", recipients.length);
+  return null;
 });

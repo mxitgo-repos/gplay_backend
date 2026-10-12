@@ -10,6 +10,7 @@ on:
       - "functions/**"
       - "firebase.json"
       - ".firebaserc"
+      - "firestore.indexes.json"
   workflow_dispatch: {}
 
 concurrency:
@@ -50,3 +51,12 @@ jobs:
 
       - name: Deploy to PROD
         run: npx firebase-tools deploy --only functions --project prod --non-interactive
+
+      # Firestore indexes are additive and idempotent, so auto-deploying them on
+      # merge is safe (unlike rules — see deploy-firestore.yml).
+      # continue-on-error until the CI service account has roles/datastore.indexAdmin;
+      # without it this 403s and would otherwise redden a good functions deploy.
+      # Drop continue-on-error once the role is granted (docs/DEPLOYMENT.md §1).
+      - name: Deploy Firestore indexes to PROD
+        continue-on-error: true
+        run: npx firebase-tools deploy --only firestore:indexes --project prod --non-interactive
