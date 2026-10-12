@@ -1,23 +1,28 @@
 rules_version = '2';
 
-// GPlay Firestore security rules — BASELINE (require authentication).
+// GPlay Firestore security rules.
 // ============================================================================
-// STATUS: deployable. Replaces the wide-open `allow read, write: if true`
-// currently live in the console (which lets ANYONE on the internet read,
-// modify, or delete the entire database). DEPLOY TO DEV AND TEST FIRST — see the
-// deploy/test plan at the bottom — before touching production.
+// STRUCTURE
+//   1. Tight, per-collection rules for `eventChat/**` and
+//      `event/{id}/benefitRedemptions/**` (§5/§7, item B3).
+//   2. `events_public/{id}`: world-readable, server-written only.
+//   3. `event/{id}`: the baseline, minus the server-only commission fields.
+//   4. A permissive require-auth baseline for EVERYTHING ELSE, which closes the
+//      "open to the internet" hole without breaking the live app.
 //
-// WHAT THIS DOES
-//   Requires an authenticated session (a real signed-in user OR an anonymous
-//   guest) for ALL access. This closes the "open to the internet" hole, which
-//   is the urgent problem. Anonymous guest mode keeps working because
-//   `signInAnonymously()` produces `request.auth != null`.
+// DEPLOY ORDER (never skip):
+//   a. Deploy the require-auth baseline ALONE first (the previous version of
+//      this file, a single `match /{document=**}` rule) and smoke-test it.
+//      Flipping internet-open -> auth-required AND permissive -> tight in one
+//      deploy makes any `permission-denied` impossible to attribute.
+//   b. Then deploy this file. DEV first, full smoke test, then PROD during low
+//      traffic with console -> Rules -> version history open for rollback.
+// Use the "Deploy Firestore Rules" workflow (Actions tab, manual dispatch).
 //
-// WHAT THIS DOES *NOT* DO (deliberately, to avoid breaking the live app)
-//   It does NOT enforce per-document ownership or trust-ladder field
-//   visibility. A full audit of the client (2026-07, 48 collections) found the
-//   app has NO client-side ownership model — it performs pervasive cross-user
-//   reads and writes GLOBAL/other-user documents directly from the client:
+// WHY THE BASELINE IS STILL PERMISSIVE
+//   A full client audit (2026-07, 48 collections) found the app has NO
+//   client-side ownership model. It performs pervasive cross-user reads and
+//   writes GLOBAL / other-user documents directly from the client:
 //     - global singleton counters incremented by any client:
 //         coins/UUFdzV2ubYg28628CEBH, eventsDetails/rWJ7dYgyWgRsFPfqrC6T,
 //         badges/{yyyy-MM-dd}
@@ -25,72 +30,347 @@ rules_version = '2';
 //       geo-box queries read the whole catalog
 //     - event subcollections (participants, comment, question, answer) written
 //       by any authenticated user
-//     - chats (message/request/group) addressed by a caller-supplied chatId
+//     - 1:1 chats (message/request/group) addressed by a caller-supplied chatId
 //       with no participant enforcement
 //     - `user` docs: cross-user reads (profiles, attendee lists); some flows
 //       (QR-scan rewards, referral/MLM gifts) write OTHER users' docs
-//   Tightening any of these to real ownership rules would break those flows
-//   until they are moved to Cloud Functions (server-side, admin privileges).
-//   That is a separate, larger project — do NOT bolt per-collection ownership
-//   onto this file without doing that work first.
+//   Tightening those requires moving the flows into Cloud Functions first. That
+//   is a separate, larger project — do NOT bolt per-collection ownership onto
+//   this file without doing that work. `eventChat` and `benefitRedemptions` are
+//   carved out here precisely because they are NEW: no legacy client flow
+//   depends on them being world-writable.
 //
-// TRUST-LADDER / FIELD VISIBILITY (future work, NOT enforced here)
-//   The granular model — guests read `events_public`, registered users call the
-//   `getEventForViewer` callable, and phone/ID-verified joined users read the
-//   full `event/{id}` doc — is specified in
-//   docs/backend_access_control_contract.md. It is intentionally NOT applied
-//   below: today the client guest feed reads `event/` directly, so enforcing it
-//   would blank the guest experience. Applying it requires the client to switch
-//   the guest/registered feed to events_public / getEventForViewer first.
+// THE PRECEDENCE TRAP THAT SHAPES THIS FILE
+//   Firestore grants access if ANY matching rule allows it, and `{document=**}`
+//   can neither be negated nor excluded from. A recursive wildcard would
+//   therefore silently override every tight rule below. The escape hatch is
+//   that SINGLE-segment wildcards bind the path segment as a comparable string
+//   -- so the baseline is expressed at fixed depths with the protected roots
+//   excluded BY NAME. Consequences:
+//     - Do not re-introduce `match /{document=**}`; it would undo all of §1.
+//     - Do not add `match /event/{id}/{sub=**}` as a convenience; it would
+//       re-open benefitRedemptions.
+//     - Paths deeper than 6 segments are denied. Verified: no such path exists
+//       in either repo, and there are no collectionGroup queries.
 // ============================================================================
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Single baseline rule: any signed-in session (real user or anonymous
-    // guest) may read/write; unauthenticated internet access is denied.
+    // ---------- helpers ----------
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function userPath(id) {
+      return /databases/$(database)/documents/user/$(id);
+    }
+
+    // get() returns null for a missing document. Repeated get() of the SAME
+    // path inside one evaluation is cached and bills a single document access
+    // against the 10-per-request / 20-per-query budget.
+    function eventDoc(eventId) {
+      return get(/databases/$(database)/documents/event/$(eventId));
+    }
+
+    function chatDoc(eventId) {
+      return get(/databases/$(database)/documents/eventChat/$(eventId));
+    }
+
+    // `hostRef` is a DocumentReference; reference values compare to path
+    // literals, so this is a direct equality rather than an id string match.
+    function isEventHost(eventId) {
+      return eventDoc(eventId) != null
+          && eventDoc(eventId).data.get("hostRef", null) == userPath(uid());
+    }
+
+    // Joined (free) or paid (paid), or the host. Deliberately accepts EITHER
+    // array, matching what getEventForViewer enforces today, so an attendee a
+    // host invited into a paid event for free is not locked out.
+    function isEventMember(eventId) {
+      return eventDoc(eventId) != null
+          && (eventDoc(eventId).data.get("usersPaid", []).hasAny([uid()])
+              || eventDoc(eventId).data.get("participantsRef", []).hasAny([userPath(uid())])
+              || isEventHost(eventId));
+    }
+
+    // Banned is checked here too, for the same stale-overlap reason as the
+    // chat-doc read rule: a rejoin can blind-arrayUnion someone back into
+    // `participants` without clearing `bannedIds`, and message CONTENT is the
+    // thing that must not leak.
+    function isChatParticipant(eventId) {
+      return chatDoc(eventId) != null
+          && uid() in chatDoc(eventId).data.get("participants", [])
+          && !(uid() in chatDoc(eventId).data.get("bannedIds", []));
+    }
+
+    function isChatHost(eventId) {
+      return chatDoc(eventId) != null
+          && uid() == chatDoc(eventId).data.get("hostId", "");
+    }
+
+    // Mirrors EventChatModel.canPost() in the client. Keep the two in sync.
+    function canPost(eventId) {
+      return chatDoc(eventId) != null
+          && chatDoc(eventId).data.get("isClosed", false) == false
+          && !(uid() in chatDoc(eventId).data.get("bannedIds", []))
+          && !(uid() in chatDoc(eventId).data.get("mutedIds", []))
+          && (chatDoc(eventId).data.get("mode", "open") == "announcements"
+                ? isChatHost(eventId)
+                : isChatParticipant(eventId));
+    }
+
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    // The only membership edit a member may make is adding or removing THEIR
+    // OWN uid. Both directions are checked, so nobody can drop someone else.
+    function onlySelfMembershipChange() {
+      return request.resource.data.get("participants", []).toSet()
+               .difference(resource.data.get("participants", []).toSet()).hasOnly([uid()])
+          && resource.data.get("participants", []).toSet()
+               .difference(request.resource.data.get("participants", []).toSet()).hasOnly([uid()]);
+    }
+
+    // A pure self-leave: `participants` is the ONLY key touched, nothing is
+    // added, and the only removal is your own uid.
     //
-    // NOTE ON PRECEDENCE: Firestore grants access if ANY matching rule allows
-    // it. A recursive `{document=**}` wildcard therefore overrides more specific
-    // rules for writes, so a separate `events_public { allow write: if false }`
-    // block would be silently overridden by this wildcard and give a false sense
-    // of protection. We deliberately keep ONE rule here. events_public is
-    // trigger-maintained; protecting it from authenticated client writes must be
-    // done in the granular ruleset (future work), not by adding a block that the
-    // wildcard would defeat.
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+    // This exists because the client removes you from the event BEFORE it
+    // removes you from the chat (event_repository.dart:602 then :618), so by
+    // the time the chat write lands `isEventMember()` is already false. That
+    // write is `unawaited` and swallows its errors, so gating leaving on event
+    // membership would silently strand people in chats for events they left —
+    // still reading them, still receiving push. Self-removal is unconditionally
+    // safe, so it does not depend on membership at all, and the rule no longer
+    // depends on the client happening to write in a particular order.
+    function isSelfLeave() {
+      return changedKeys().hasOnly(["participants"])
+          && request.resource.data.get("participants", []).toSet()
+               .difference(resource.data.get("participants", []).toSet()).size() == 0
+          && resource.data.get("participants", []).toSet()
+               .difference(request.resource.data.get("participants", []).toSet()).hasOnly([uid()]);
+    }
+
+    // ---------- 1. TIGHT: event group chat (§5) ----------
+
+    match /eventChat/{eventId} {
+      // The Messages-tab query filters `participants array-contains uid`, so
+      // every document it can return satisfies the first clause.
+      //
+      // Event members who are not yet chat participants are also allowed, for
+      // one specific reason: EventChatRepository.ensureMembership OPENS with a
+      // get() on this doc, and that reconcile is how a Stripe buyer joins the
+      // chat when the B1 webhook hasn't landed (or didn't fire — see BUG-5).
+      // Keying the read on chat participation alone would deny that get(), the
+      // client would swallow it, and the reconcile would silently never run.
+      //
+      // Banned members are excluded rather than merely being non-participants,
+      // so someone the host removed cannot keep reading `lastMessage` off this
+      // doc. Message reads stay keyed on isChatParticipant, so a banned member
+      // sees no content either way.
+      // `bannedIds` is checked FIRST, and independently of `participants`, so
+      // being banned always wins. The two arrays should never overlap — the
+      // host's remove does arrayRemove(participants) + arrayUnion(bannedIds) in
+      // one write — but the client's joinChat() blind-arrayUnions on rejoin
+      // without consulting bannedIds, so a stale overlap is reachable. Reading
+      // membership first would let that stale entry re-open the chat.
+      // The host is exempt: never lock a host out of moderating their own event.
+      allow read: if isSignedIn() && (
+             uid() == resource.data.get("hostId", "")
+          || (!(uid() in resource.data.get("bannedIds", []))
+              && (uid() in resource.data.get("participants", [])
+                  || isEventMember(eventId))));
+
+      // Seeding the chat is only allowed with yourself as the sole member, and
+      // with a truthful hostId — forging it would hand the creator the
+      // host-only moderation powers below.
+      allow create: if isSignedIn()
+          && isEventMember(eventId)
+          && request.resource.data.get("participants", []).hasOnly([uid()])
+          && eventDoc(eventId) != null
+          && userPath(request.resource.data.get("hostId", "")) == eventDoc(eventId).data.get("hostRef", null);
+
+      // Host: full control of moderation state (mode, isClosed, mutedIds,
+      // bannedIds) and the thread summary.
+      allow update: if isSignedIn() && uid() == resource.data.get("hostId", "");
+
+      // Leaving is always yours to do — no event membership required. See
+      // isSelfLeave(). Deliberately placed before the member rule so a user who
+      // has already been removed from the event can still exit the chat.
+      allow update: if isSignedIn() && isSelfLeave();
+
+      // Member: join with their own uid, mark read, and write the thread
+      // summary — the last only when they are actually allowed to post, so a
+      // muted or banned member cannot forge a "last message".
+      allow update: if isSignedIn()
+          && isEventMember(eventId)
+          && !(uid() in resource.data.get("bannedIds", []))
+          && changedKeys().hasOnly(["participants", "readBy", "lastMessage",
+              "lastMessageSenderId", "lastMessageSenderName", "lastMessageTimestamp"])
+          && onlySelfMembershipChange()
+          && (!changedKeys().hasAny(["lastMessage", "lastMessageSenderId", "lastMessageTimestamp"])
+              || (request.resource.data.get("lastMessageSenderId", "") == uid() && canPost(eventId)));
+
+      allow delete: if isSignedIn() && uid() == resource.data.get("hostId", "");
+    }
+
+    match /eventChat/{eventId}/messages/{messageId} {
+      allow read: if isSignedIn() && isChatParticipant(eventId);
+
+      allow create: if isSignedIn()
+          && request.resource.data.get("senderId", "") == uid()
+          && request.resource.data.get("isDeleted", false) == false
+          && canPost(eventId);
+
+      // Soft delete is host-only; everyone else may only mark themselves read.
+      allow update: if isSignedIn() && (
+             (isChatHost(eventId)
+              && changedKeys().hasOnly(["isDeleted", "deletedBy", "deletedAt"]))
+          || (isChatParticipant(eventId)
+              && changedKeys().hasOnly(["readBy"])));
+
+      // Hard delete belongs to cleanupDeletedEvent (server-side, B4), which
+      // bypasses rules. The client's EventChatRepository.deleteChat also still
+      // runs during event deletion, but it swallows everything (`catch (_)` —
+      // "Cleanup is best-effort"), so denying it here would NOT break deleting
+      // an event; B4 would simply do all the work. Host is kept for now only so
+      // the two cleanup paths behave identically while B4 is unproven. Tighten
+      // to `false` once B4 is verified on DEV.
+      allow delete: if isSignedIn() && isChatHost(eventId);
+    }
+
+    // eventChat/{eventId}/pushState/** is intentionally UNMATCHED, and so denied
+    // to every client. The eventChatMessagePush trigger writes it with admin
+    // privileges, which bypasses rules.
+
+    // ---------- 2. TIGHT: benefit redemptions (§7) ----------
+
+    match /event/{eventId}/benefitRedemptions/{holderId} {
+      allow read: if isSignedIn() && (uid() == holderId || isEventHost(eventId));
+
+      // Only the holder may mint their own redemption, and only in the
+      // pre-scan state. (The redeemEventBenefit callable uses admin privileges
+      // and bypasses this; the rule covers the client until it switches over.)
+      allow create: if isSignedIn()
+          && uid() == holderId
+          && request.resource.data.get("userId", "") == uid()
+          && request.resource.data.get("eventId", "") == eventId
+          && request.resource.data.get("status", "") == "active";
+
+      // Burning a code at the door is the host's action, and one-way.
+      allow update: if isSignedIn()
+          && isEventHost(eventId)
+          && changedKeys().hasOnly(["status", "usedAt", "usedBy"])
+          && request.resource.data.get("status", "") == "used";
+
+      // See the note on message deletes above — same reasoning.
+      allow delete: if isSignedIn() && isEventHost(eventId);
+    }
+
+    // ---------- 3. Guest-safe event mirror (§1/§2, item B1/B3) ----------
+    // Maintained only by the eventPublicProjection trigger, which writes with
+    // admin privileges and bypasses rules. It holds nothing a guest may not
+    // see, so it is readable even without auth.
+    match /events_public/{eventId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ---------- 4. event docs: baseline + server-only fields (Task C) ----------
+    // Same permissive signed-in access as the baseline (the client still
+    // creates, edits and deletes events with no ownership check — see the
+    // header), EXCEPT the commission-waiver fields, which only
+    // createTicketPaymentIntent may write. Setting them from a client would
+    // waive G-Play's ticket commission without spending a Premium credit.
+    // The client creates events with add() and edits them with field-level
+    // update(), never a whole-doc set(), so no legacy flow touches these keys.
+    function serverOnlyEventFields() {
+      return ["commissionWaived", "commissionWaivedAt"];
+    }
+
+    match /event/{eventId} {
+      allow read, delete: if isSignedIn();
+      allow create: if isSignedIn()
+          && !request.resource.data.keys().hasAny(serverOnlyEventFields());
+      allow update: if isSignedIn()
+          && !changedKeys().hasAny(serverOnlyEventFields());
+    }
+
+    // ---------- 5. BASELINE: everything else ----------
+    // Any signed-in session (real user OR anonymous guest) may read/write;
+    // unauthenticated internet access is denied. Expressed at fixed depths
+    // rather than recursively, so it cannot override §1-§4 — see the
+    // precedence note in the header before touching these.
+
+    match /{collection}/{docId} {
+      allow read, write: if isSignedIn()
+          && collection != "eventChat"
+          && collection != "events_public"
+          && collection != "event";
+    }
+
+    match /{collection}/{docId}/{sub}/{subDocId} {
+      allow read, write: if isSignedIn()
+          && collection != "eventChat"
+          && !(collection == "event" && sub == "benefitRedemptions");
+    }
+
+    // Depth-6 insurance. No path this deep exists in either repo today; this
+    // exists so that adding one does not silently 403 in production.
+    match /{collection}/{docId}/{sub}/{subDocId}/{sub2}/{sub2DocId} {
+      allow read, write: if isSignedIn()
+          && collection != "eventChat"
+          && !(collection == "event" && sub == "benefitRedemptions");
     }
   }
 }
 
 // ============================================================================
-// DEPLOY / TEST PLAN (do this in order; never skip dev)
+// SMOKE TEST (DEV, before PROD — every item, signed in AND as a guest)
 //
-// 1. DEV FIRST. Point the Firebase CLI at the dev project and deploy:
-//        firebase use g-play-dd31d
-//        firebase deploy --only firestore:rules
-//    (Or paste this file into Firebase console -> Firestore -> Rules for
-//     g-play-dd31d and Publish.)
+// Baseline (unchanged behaviour — regressions here mean the depth-limited
+// rules missed a path):
+//   - Welcome -> Continue as guest -> browse feed / open an event
+//   - Sign up a new user (writes the user doc)
+//   - Home feed loads events (geo queries)
+//   - Open an event, RSVP a free event, buy a paid ticket
+//   - Open the QR ticket; host scans it (scanqr writes rewards)
+//   - Chats: open a 1:1 conversation, send a message
+//   - Rewards / daily check-in / badges (global counter writes)
+//   - Profile edits, favorites, comments/questions on an event
+//   - Delete an event you host (exercises the client's subcollection loop)
 //
-// 2. SMOKE-TEST every major flow on a DEV build while signed in AND as a guest:
-//        - Welcome -> Continue as guest -> browse feed / open an event
-//        - Sign up a new user (writes the user doc)
-//        - Home feed loads events (geo queries)
-//        - Open an event, RSVP a free event, buy a paid ticket
-//        - Open the QR ticket; host scans it (scanqr writes rewards)
-//        - Chats: open a conversation, send a message
-//        - Rewards / daily check-in / badges (global counter writes)
-//        - Profile edits, favorites, comments/questions on an event
-//    Watch the flutter console for `permission-denied`. Any such error means a
-//    flow needs auth to be established earlier, or needs a rule exception.
+// Newly restricted:
+//   - Host: event chat appears in Messages; can post; can mute/ban/close/switch
+//     to announcements; can soft-delete a message
+//   - Attendee: can read and post; CANNOT change mode/isClosed/mutedIds/bannedIds;
+//     CANNOT soft-delete someone else's message
+//   - Announcements mode: attendee send denied, host send allowed
+//   - Muted attendee: reads fine, send denied
+//   - Banned attendee: read and send both denied, cannot re-add self
+//   - Non-attendee: reading eventChat/{id} denied
+//   - Event with NO chat doc yet: opening it must not hard-error the UI
+//   - Benefit: holder redeems; a second user cannot create a redemption for the
+//     holder; host scan flips status to 'used'; holder cannot set 'used'
+//   - Create, edit and delete an event you host (the `event` rule is now its
+//     own match block, not the baseline)
 //
-// 3. WATCH FOR PRE-AUTH ACCESS. If anything reads Firestore before
-//    signInAnonymously()/sign-in completes, it will now fail. The fix is to
-//    ensure auth (even anonymous) is established before that read, NOT to loosen
-//    these rules back to `if true`.
+// Watch the flutter console for `permission-denied`. If something reads
+// Firestore before signInAnonymously()/sign-in completes it will now fail — the
+// fix is to establish auth earlier, NOT to loosen these rules.
 //
-// 4. ONLY AFTER dev is clean across all flows, repeat for PROD
-//    (g-play-dev-e4c4c). Deploy during low traffic and keep the previous
-//    ruleset handy to roll back (console -> Rules -> version history).
+// THE LOAD-BEARING ASSUMPTIONS — now covered by `npm test` (test/rules/):
+//   - arrayUnion/arrayRemove results are visible in request.resource.data
+//     (onlySelfMembershipChange() and isSelfLeave() are meaningless otherwise)
+//   - hasAny() over the reference-typed `participantsRef` matches userPath()
+//   - get() on a missing document returns null rather than erroring
+// Run `npm test` after ANY edit to this file. It is the only thing standing
+// between the event chat and the internet, and a mistake here is global and
+// instant.
 // ============================================================================

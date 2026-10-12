@@ -17,8 +17,9 @@
 > style: `exports.fnName = functions.https.onCall(async (data, context) => {…})`,
 > throwing `new functions.https.HttpsError(code, message)`. Stripe is already
 > wired (`const stripe = new Stripe(process.env.STRIPE_SECRET)`). Then implement
-> the two task groups in this file: **(A) Stripe ticket payments** and **(B)
-> server-side access enforcement**, adding new exports to `index.js`. Match the
+> the task groups in this file: **(A) Stripe ticket payments**, **(B)
+> server-side access enforcement** and **(C) the Premium commission-free ticket
+> sales perk**, adding new exports to `index.js` (C changes A1 and the B3 rules). Match the
 > exact request/response shapes specified — the Flutter client is already written
 > against them and must not change. Reuse existing Connect onboarding rather than
 > re-building it. Propose a plan before coding.
@@ -48,7 +49,7 @@ The GPlay Flutter app implements, client-side:
   progressively more event info.
 
 The client cannot enforce data hiding or move money on its own — that's this
-repo's job. Two task groups below.
+repo's job. Three task groups below.
 
 ### Locked decisions (do not re-litigate)
 - **Q3:** Data hiding is **server-side enforced** (a technical user reading
@@ -192,6 +193,90 @@ description are hidden from **guests on all event types** (customer direction).
   partial list but NOT address/benefits/chat/full list.
 - Verified + joined/paid → full doc.
 - Legacy G-Token paid event → absent from `events_public`.
+
+---
+
+## TASK C — Premium "commission-free ticket sales" perk (QA round 2026-10)
+
+### Problem
+Every Premium plan advertises **"Venta de boletos sin comisión (hasta 2
+eventos)"** — the host's first **2 paid events** carry no G-Play commission.
+For real-money (fiat) tickets that commission is the Stripe
+`application_fee_amount` set in **A1**, and A1 knows nothing about Premium, so
+Premium hosts pay the full commission on every MXN/USD ticket. The app can't fix
+this: the fee is decided server-side at payment time. (A customer QA report on
+2026-10-12: "tener 2 eventos con costo sin comisión… todas me las está
+cobrando".)
+
+### What the client already does (don't duplicate)
+- The **purchase** (client, `putBuyTokensPremium`) writes to the host's user doc:
+  `isPremium: true`, `endPremium: Timestamp` (week = +7 days, `month` = **+6
+  months**, year = +1 year), `planPremium: 'week'|'month'|'year'`, and
+  `salesPremium: 2` (set, not incremented — a re-purchase resets it to 2).
+- **Expiry** (client, since 2026-10): on launch the app flips `isPremium` to
+  `false` once `endPremium` has passed. Don't rely on that alone: a host who
+  doesn't open the app stays `isPremium: true` past expiry. A user with
+  `isPremium: true` and **no** `endPremium` was granted by hand and does not
+  expire.
+- The client spends `salesPremium` **only** for legacy G-Token paid events, at
+  event finish (`eventFinish` `feeOption`). Those are hidden per Q5, so in
+  practice the client never spends a credit on a fiat event. **Fiat events are
+  entirely this task's job**, so there's no double spend.
+
+### Rule
+A host has **active Premium** when
+`isPremium == true && (endPremium == null || endPremium > now)`. Use server
+time; never trust a client-sent flag.
+
+A credit is spent **per event, not per ticket**: the first time a paid fiat
+event of an active-Premium host with `salesPremium > 0` sells a ticket, the
+event becomes commission-free and the host loses one credit. All later tickets
+of that event are also commission-free, and no further credit is spent on it.
+
+### C1. Changes to `createTicketPaymentIntent` (A1)
+Inside a Firestore **transaction** on `event/{eventId}` + the host's
+`user/{hostUid}`:
+1. If `event.commissionWaived == true`, use `application_fee_amount = 0`.
+2. Else, if the host has active Premium and `salesPremium > 0`: set
+   `event.commissionWaived = true`, `event.commissionWaivedAt = serverTimestamp`,
+   decrement `user.salesPremium` by 1, and use `application_fee_amount = 0`.
+3. Else charge the normal commission.
+
+Doing this in the transaction makes two buyers racing on the event's first
+ticket spend exactly one credit. Put `commissionWaived: 'true'|'false'` in the
+PaymentIntent `metadata` for auditing.
+
+**Accepted trade-off:** the credit is spent when the first PaymentIntent is
+created, even if that payment then fails. The event stays waived, so the credit
+isn't lost; it simply belongs to that event. The alternative, claiming in the
+A2 webhook, is too late: `application_fee_amount` is fixed when the intent is
+created.
+
+### C2. Fields
+- `event.commissionWaived: bool` (absent = false), `event.commissionWaivedAt:
+  Timestamp`. Server-written only: add both to the client-unwritable fields in
+  the Firestore rules (B3).
+- `user.salesPremium: int` remains the counter (the app's My Plan screen shows
+  `salesPremium/2`).
+
+### Open product questions (confirm with the customer; defaults in bold)
+- If the plan expires while a waived event is still selling, do later tickets
+  stay commission-free? **Yes: the waiver is locked to the event once claimed.**
+- Should a free event, or a paid event that never sells, consume a credit?
+  **No: only the first ticket sale claims it** (this matches C1).
+
+### C acceptance criteria
+- An active-Premium host with `salesPremium: 2` sells tickets on paid event X.
+  The first PaymentIntent has `application_fee_amount = 0`, X gets
+  `commissionWaived: true`, and `salesPremium` drops to 1. A second ticket on X
+  also has fee 0, and `salesPremium` stays 1.
+- A second paid event Y does the same, and `salesPremium` drops to 0. A third
+  paid event Z is charged the normal commission.
+- A host with `isPremium: true` but `endPremium` in the past is charged the
+  normal commission, and their credits are untouched.
+- Two buyers creating the first PaymentIntents of an event concurrently spend
+  exactly one credit.
+- Free events and non-Premium hosts behave exactly as A1.
 
 ---
 

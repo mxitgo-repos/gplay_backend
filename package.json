@@ -3,9 +3,17 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node scripts/run-rules-tests.mjs",
+    "test:watch": "node scripts/run-rules-tests.mjs --watch",
+    "test:functions": "node scripts/run-rules-tests.mjs --functions"
   },
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase": "^11.6.0",
+    "vitest": "^2.1.9"
+  }
 }
